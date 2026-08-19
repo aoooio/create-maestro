@@ -199,7 +199,13 @@ export class ClockSync {
   private tick(): void {
     if (this.stopped) return;
 
-    const t0 = this.options.now();
+    // Whole milliseconds: `clientSendMs` is an int64 on the wire, and the
+    // server rejects the whole message rather than truncating a float — so an
+    // unrounded `performance.now()` means every sample is refused and the
+    // clock never syncs at all. Rounding here (rather than at the codec) keeps
+    // the value the pong is matched against identical to the one that was
+    // sent; the sub-millisecond loss is far inside the ±15 ms budget.
+    const t0 = Math.round(this.options.now());
     this.inFlight.add(t0);
     // An unanswered ping must not pin a sample slot forever.
     if (this.inFlight.size > WINDOW * 2) {

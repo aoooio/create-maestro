@@ -66,8 +66,12 @@ export class SessionController {
   constructor(private readonly options: SessionControllerOptions) {
     this.clock = new ClockSync({
       now: () => performance.now(),
-      sendPing: (clientSendMs) =>
-        this.ws.send({ t: "time.ping", d: { clientSendMs } }, "time.ping"),
+      // Deliberately not coalesced: the initial burst is twelve samples in a
+      // second and a half, and collapsing them onto one would leave the
+      // estimate with nothing to take a median of. A ping delayed by the
+      // outbound budget simply measures as a slow round trip, which the filter
+      // already knows to throw away.
+      sendPing: (clientSendMs) => this.ws.send({ t: "time.ping", d: { clientSendMs } }),
       onUpdate: (state) =>
         useAudioStore.getState().setSync({
           quality: state.quality,
@@ -237,6 +241,17 @@ export class SessionController {
 
   // --- musician commands ---
 
+  /**
+   * The one parameter a musician controls (§6.3). It is strictly local —
+   * `param.set` is maestro-only, so this never touches the wire. It moves the
+   * cutoff *within* the ceiling the maestro has set: authority stays where the
+   * protocol puts it, and the gesture still changes the sound in the hand.
+   */
+  setLocalParam(value: number): void {
+    useAudioStore.getState().setLocalParam(Math.min(1, Math.max(0, value)));
+    this.applyAllParameters();
+  }
+
   /** A gesture from the pad: heard locally at once, and reported to the
    * maestro. The server relays it; it never comes back as sound. */
   sendTrigger(kind: string, intensity: number): void {
@@ -368,10 +383,16 @@ export class SessionController {
   private applyAllParameters(): void {
     if (!this.engine) return;
     const state = useSessionStore.getState();
-    const group = this.options.role === "maestro" ? 0 : state.groupId;
-    for (const key of ["cutoff", "resonance", "gain", "reverb", "delay", "mute"] as const) {
+    const maestro = this.options.role === "maestro";
+    const group = maestro ? 0 : state.groupId;
+    for (const key of ["resonance", "gain", "reverb", "delay", "mute"] as const) {
       this.engine.setParameter(key, effectiveParameter(state.params, key, group));
     }
+
+    // The maestro's cutoff is a ceiling; a musician's own control moves inside it.
+    const cutoff = Number(effectiveParameter(state.params, "cutoff", group));
+    const local = useAudioStore.getState().localParam;
+    this.engine.setParameter("cutoff", maestro ? cutoff : cutoff * (0.25 + 0.75 * local));
     // `density` shapes what is played rather than how it sounds.
     this.refreshVoicing();
   }

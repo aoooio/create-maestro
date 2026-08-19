@@ -12,13 +12,18 @@ class Network {
   /** The truth the estimator is supposed to find. */
   trueOffset = 500_000;
   pending: number[] = [];
+  /** Every ping ever sent, kept for assertions about the wire format. */
+  sent: number[] = [];
   updates: ClockSyncState[] = [];
   readonly sync: ClockSync;
 
   constructor() {
     this.sync = new ClockSync({
       now: () => this.clientNow,
-      sendPing: (t0) => this.pending.push(t0),
+      sendPing: (t0) => {
+        this.pending.push(t0);
+        this.sent.push(t0);
+      },
       onUpdate: (state) => this.updates.push(state),
     });
   }
@@ -120,6 +125,25 @@ describe("offset estimation", () => {
 
     expect(net.sync.isReady()).toBe(true);
     expect(net.sync.offset()).toBeCloseTo(net.trueOffset, 6);
+  });
+
+  it("sends whole milliseconds, because the wire field is an int64", () => {
+    // `clientSendMs` is an int64 server-side, and the server refuses the whole
+    // message rather than truncating — so a raw `performance.now()` means every
+    // sample is rejected and the clock silently never syncs.
+    net.clientNow = 1000.4;
+    net.sync.start();
+    for (let i = 0; i < 5; i++) {
+      net.answer();
+      net.advance(120.3);
+    }
+
+    for (const t0 of net.sent) {
+      expect(Number.isInteger(t0)).toBe(true);
+    }
+    expect(net.sent.length).toBeGreaterThan(0);
+    // And the estimate still lands: rounding costs well under a millisecond.
+    expect(Math.abs(net.sync.offset() - net.trueOffset)).toBeLessThan(1);
   });
 
   it("ignores a pong nobody asked for", () => {
