@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A phosphor screen with a wireframe pulse on it: the whole client in 32px. -->
+  <rect width="32" height="32" rx="4" fill="#040804"/>
+  <g fill="none" stroke="#33ff66" stroke-width="1.6" stroke-linejoin="round">
+    <path d="M6 20 L11 9 L16 20 L21 9 L26 20"/>
+  </g>
+  <g fill="#33ff66">
+    <rect x="6" y="24" width="4" height="2"/>
+    <rect x="14" y="24" width="4" height="2"/>
+    <rect x="22" y="24" width="4" height="2"/>
+  </g>
+</svg>

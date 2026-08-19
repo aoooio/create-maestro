@@ -1,0 +1,105 @@
+@import "tailwindcss";
+
+/*
+ * The whole client is one monochrome phosphor terminal. Three real CRT
+ * phosphors carry the meaning: P1 green is the master colour and GROUP 1,
+ * P4 cyan is GROUP 2 (the spec's "blue", in CRT terms), P3 amber is trouble.
+ */
+@theme {
+  --color-screen: #040804;
+  --color-screen-deep: #010301;
+  --color-phosphor: #33ff66;
+  --color-phosphor-cyan: #33ffff;
+  --color-phosphor-amber: #ffb000;
+  --color-dim: color-mix(in srgb, #33ff66 45%, transparent);
+  --color-dimmer: color-mix(in srgb, #33ff66 18%, transparent);
+
+  --font-mono:
+    ui-monospace, "SF Mono", "SFMono-Regular", "DejaVu Sans Mono", "Menlo",
+    "Consolas", monospace;
+
+  --animate-blink: blink 1.05s step-end infinite;
+  --animate-boot: boot 220ms ease-out both;
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes boot {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+    background: var(--color-screen-deep);
+    color: var(--color-phosphor);
+    font-family: var(--font-mono);
+    /* A CRT has no subpixel structure to exploit; this also keeps the glow even. */
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    overscroll-behavior: none;
+  }
+
+  /* Phosphor glow is a text-shadow, never a filter: a full-screen blur costs
+     frames we owe to the wireframe scene. */
+  .glow {
+    text-shadow: 0 0 4px currentColor;
+  }
+
+  .glow-strong {
+    text-shadow:
+      0 0 2px currentColor,
+      0 0 10px currentColor;
+  }
+
+  ::selection {
+    background: var(--color-phosphor);
+    color: var(--color-screen-deep);
+  }
+
+  /* Inputs inherit the terminal rather than the platform. */
+  input,
+  button,
+  textarea {
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+  }
+
+  input:focus-visible,
+  button:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 1px solid currentColor;
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Hit targets on the musician screen are touch surfaces, not documents. */
+  .no-touch-scroll {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
