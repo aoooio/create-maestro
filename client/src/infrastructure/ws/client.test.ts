@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { WsClient, maestroUrl, performUrl, type SocketLike } from "./client";
+import {
+  WsClient,
+  maestroUrl,
+  performUrl,
+  type SocketLike,
+  type WsClientOptions,
+} from "./client";
 import type { ServerMessage } from "./codec";
 
 /** A socket we drive by hand, so the resilience rules can be tested without a
@@ -45,12 +51,18 @@ class FakeSocket implements SocketLike {
   }
 }
 
-function build(overrides: Partial<Parameters<typeof makeOptions>[0]> = {}) {
+type Overrides = Partial<Omit<WsClientOptions, "url" | "hello" | "onMessage" | "socketFactory">>;
+
+function build(overrides: Overrides = {}) {
   const sockets: FakeSocket[] = [];
   const messages: ServerMessage[] = [];
-  const options = makeOptions({ ...overrides });
   const client = new WsClient({
-    ...options,
+    url: "ws://localhost:8080/ws/v1/perform?session=s1",
+    hello: { clientVersion: "test", capabilities: { webaudio: true, webgl: true } },
+    // A fixed jitter draw keeps the backoff assertions exact.
+    random: () => 0.5,
+    now: () => Date.now(),
+    ...overrides,
     onMessage: (message) => messages.push(message),
     socketFactory: () => {
       const socket = new FakeSocket();
@@ -59,17 +71,6 @@ function build(overrides: Partial<Parameters<typeof makeOptions>[0]> = {}) {
     },
   });
   return { client, sockets, messages };
-}
-
-function makeOptions(overrides: Record<string, unknown>) {
-  return {
-    url: "ws://localhost:8080/ws/v1/perform?session=s1",
-    hello: { clientVersion: "test", capabilities: { webaudio: true, webgl: true } },
-    // A fixed jitter draw keeps the backoff assertions exact.
-    random: () => 0.5,
-    now: () => Date.now(),
-    ...overrides,
-  } as never;
 }
 
 beforeEach(() => {
