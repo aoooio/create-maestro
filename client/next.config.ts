@@ -7,6 +7,13 @@ const config: NextConfig = {
   experimental: {
     typedRoutes: true,
   },
+  allowedDevOrigins: [
+    "192.168.1.108",
+    "10.x.*.*",
+    "172.x.x.x",
+    "127.0.0.1",
+    "localhost",
+  ],
 };
 
 export default config;
