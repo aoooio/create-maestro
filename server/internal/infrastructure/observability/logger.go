@@ -28,11 +28,14 @@ func Session(l *slog.Logger, id session.SessionID) *slog.Logger {
 	return l.With(slog.String("sessionId", string(id)))
 }
 
-// Participant returns a logger tagged with a session and one participant.
-func Participant(l *slog.Logger, sid session.SessionID, pid session.ParticipantID, role session.Role) *slog.Logger {
-	return l.With(
-		slog.String("sessionId", string(sid)),
-		slog.String("participantId", string(pid)),
-		slog.String("role", role.String()),
-	)
+// Role tags a logger with the role of a connection, which is known before the
+// participant itself exists.
+func Role(l *slog.Logger, role session.Role) *slog.Logger {
+	return l.With(slog.String("role", role.String()))
+}
+
+// Participant adds the participant to an already session-tagged logger. It is
+// deliberately additive: tagging the same key twice would emit it twice.
+func Participant(l *slog.Logger, pid session.ParticipantID) *slog.Logger {
+	return l.With(slog.String("participantId", string(pid)))
 }

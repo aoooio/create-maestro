@@ -108,6 +108,38 @@ func TestJoinSessionReturnsMessagesInsteadOfBroadcasting(t *testing.T) {
 	}
 }
 
+func TestPreflightJoinRefusesBeforeAnythingIsAllocated(t *testing.T) {
+	h := newHarness(t, Options{})
+	created, err := h.u.CreateSession(context.Background(), CreateSessionInput{MaxUsers: 1})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := h.u.PreflightJoin(ctx, created.SessionID, session.RoleMusician, ""); err != nil {
+		t.Fatalf("an empty session must accept a musician: %v", err)
+	}
+	if err := h.u.PreflightJoin(ctx, created.SessionID, session.RoleMaestro, created.MaestroToken); err != nil {
+		t.Fatalf("the right token must be accepted: %v", err)
+	}
+	if err := h.u.PreflightJoin(ctx, created.SessionID, session.RoleMaestro, "nope"); session.CodeOf(err) != session.CodeUnauthorized {
+		t.Fatalf("want unauthorized, got %v", err)
+	}
+	if err := h.u.PreflightJoin(ctx, "ghost", session.RoleMusician, ""); session.CodeOf(err) != session.CodeSessionNotFound {
+		t.Fatalf("want session_not_found, got %v", err)
+	}
+
+	h.join(t, created.SessionID, session.RoleMusician, "", "amelie")
+	if err := h.u.PreflightJoin(ctx, created.SessionID, session.RoleMusician, ""); session.CodeOf(err) != session.CodeSessionFull {
+		t.Fatalf("want session_full, got %v", err)
+	}
+
+	h.join(t, created.SessionID, session.RoleMaestro, created.MaestroToken, "Nadia")
+	if err := h.u.PreflightJoin(ctx, created.SessionID, session.RoleMaestro, created.MaestroToken); session.CodeOf(err) != session.CodeForbiddenRole {
+		t.Fatalf("a second maestro must be refused up front, got %v", err)
+	}
+}
+
 func TestJoinSessionUnknownSession(t *testing.T) {
 	h := newHarness(t, Options{})
 	_, err := h.u.JoinSession(context.Background(), JoinSessionInput{SessionID: "ghost"})

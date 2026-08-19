@@ -11,8 +11,8 @@ import (
 )
 
 // joinCodeAlphabet drops the characters people confuse when reading a code off
-// a screen at the back of a room: I/1, O/0, S/5.
-const joinCodeAlphabet = "ABCDEFGHJKLMNPQRTUVWXYZ2346789"
+// a screen at the back of a room: I/L/1, O/0, S/5.
+const joinCodeAlphabet = "ABCDEFGHJKMNPQRTUVWXYZ2346789"
 
 // JoinCodeLen is the length of a short join code.
 const JoinCodeLen = 4

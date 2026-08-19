@@ -545,3 +545,31 @@ func assertStatus(t *testing.T, resp *http.Response, status int, code string) {
 		t.Fatalf("error code = %q, want %q", body.Code, code)
 	}
 }
+
+// On shutdown the clients must be told the server is going away — code 1001
+// is what tells a client to reconnect rather than to give up.
+func TestShutdownClosesClientsWithGoingAway(t *testing.T) {
+	srv := newTestServer(t, nil)
+	maestro := srv.dialMaestro(t)
+	maestro.join()
+	musician := srv.dialMusician(t, "amelie")
+	musician.join()
+
+	srv.stop()
+
+	for _, c := range []*client{maestro, musician} {
+		if code := c.closeCode(); code != websocket.CloseGoingAway {
+			t.Fatalf("%s: close code = %d, want %d (going away)", c.name, code, websocket.CloseGoingAway)
+		}
+	}
+
+	// And the door is shut: a latecomer is turned away rather than hijacked.
+	_, resp, err := srv.tryDial(t, "/ws/v1/perform", url.Values{"session": {string(srv.sessions.ID)}}, nil)
+	if err == nil {
+		t.Fatal("a draining server must refuse new connections")
+	}
+	if resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("unexpected response: %v", resp)
+	}
+	resp.Body.Close()
+}

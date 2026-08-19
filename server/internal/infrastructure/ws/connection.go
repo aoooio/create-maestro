@@ -121,16 +121,26 @@ func (c *Connection) closeGoingAway() {
 // session. It returns when everything is cleaned up.
 func (c *Connection) serve(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(1)
+	writeDone := make(chan struct{})
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		defer close(writeDone)
 		c.writePump()
+	}()
+	go func() {
+		defer wg.Done()
+		// Once the write pump has put its close frame on the wire, closing the
+		// socket is what unblocks a read parked in ReadMessage — and the only
+		// safe way to do it: gorilla forbids calling SetReadDeadline while a
+		// read is in flight, and waiting for the deadline instead would stall
+		// every shutdown for a full pongWait.
+		<-writeDone
+		_ = c.ws.Close()
 	}()
 
 	c.readPump(ctx)
 	c.close()
-	// Unblock the read pump if it is still parked on a read.
-	_ = c.ws.SetReadDeadline(time.Now())
 	wg.Wait()
 	_ = c.ws.Close()
 
@@ -353,7 +363,7 @@ func (c *Connection) join(ctx context.Context, msg inbound) error {
 
 	c.participantID = out.Participant.ID
 	c.group = out.Participant.Group
-	c.log = observability.Participant(c.log, c.sessionID, c.participantID, c.role)
+	c.log = observability.Participant(c.log, c.participantID)
 	c.joined.Store(true)
 
 	c.hub.Register(c)

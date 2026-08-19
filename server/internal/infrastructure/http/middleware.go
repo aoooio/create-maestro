@@ -1,6 +1,8 @@
 package http
 
 import (
+	"bufio"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -55,9 +57,27 @@ func (r *statusRecorder) WriteHeader(status int) {
 	r.ResponseWriter.WriteHeader(status)
 }
 
-// Unwrap lets http.ResponseController and the WebSocket hijack reach the real
-// writer underneath.
+// Unwrap lets http.ResponseController reach the real writer underneath.
 func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+// Hijack hands the raw connection over. Without it every WebSocket upgrade
+// behind this middleware fails: the library type-asserts on http.Hijacker and
+// never looks at Unwrap.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("the underlying writer does not support hijacking")
+	}
+	r.status = http.StatusSwitchingProtocols
+	return hijacker.Hijack()
+}
+
+// Flush keeps streaming responses working through the wrapper.
+func (r *statusRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
 
 // RequestLog writes one structured line per request.
 func RequestLog(log *slog.Logger) Middleware {

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,8 @@ type testServer struct {
 	hub      *Hub
 	handler  *Handler
 	sessions *sessionFixture
+	shutdown func()
+	stopOnce sync.Once
 }
 
 type sessionFixture struct {
@@ -91,15 +94,7 @@ func newTestServer(t *testing.T, tune func(*config.Config)) *testServer {
 		t.Fatalf("CreateSession: %v", err)
 	}
 
-	t.Cleanup(func() {
-		srv.CloseClientConnections()
-		srv.Close()
-		stopHub()
-		<-hubDone
-		handler.Wait()
-	})
-
-	return &testServer{
+	ts := &testServer{
 		http:    srv,
 		uc:      uc,
 		hub:     hub,
@@ -109,8 +104,25 @@ func newTestServer(t *testing.T, tune func(*config.Config)) *testServer {
 			Code:  created.JoinCode,
 			Token: created.MaestroToken,
 		},
+		shutdown: func() {
+			stopHub()
+			<-hubDone
+			handler.Wait()
+		},
 	}
+
+	t.Cleanup(func() {
+		ts.stop()
+		srv.CloseClientConnections()
+		srv.Close()
+	})
+
+	return ts
 }
+
+// stop replays the shutdown sequence of the composition root: the hub closes
+// every connection, then the handler waits for the pumps to drain.
+func (s *testServer) stop() { s.stopOnce.Do(s.shutdown) }
 
 // received is a decoded envelope; the payload stays raw so each test asks for
 // exactly the shape it cares about.

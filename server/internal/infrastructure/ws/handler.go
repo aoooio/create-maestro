@@ -119,7 +119,7 @@ func (h *Handler) accept(w http.ResponseWriter, r *http.Request, role session.Ro
 		hub:       h.hub,
 		codec:     h.codec,
 		uc:        h.uc,
-		log:       observability.Session(h.log, sid).With(slog.String("role", role.String())),
+		log:       observability.Role(observability.Session(h.log, sid), role),
 		sessionID: sid,
 		role:      role,
 		token:     token,
