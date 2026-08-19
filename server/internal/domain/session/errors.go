@@ -51,6 +51,12 @@ func Invalidf(format string, args ...any) *Error {
 	return newError(CodeInvalidPayload, false, fmt.Sprintf(format, args...))
 }
 
+// Internalf builds a server-side failure. Its message stays server-side:
+// MessageOf only reveals it for domain errors the client can act on.
+func Internalf(format string, args ...any) *Error {
+	return newError(CodeInternal, true, fmt.Sprintf(format, args...))
+}
+
 // CodeOf extracts the protocol code of any error, defaulting to internal.
 func CodeOf(err error) Code {
 	if err == nil {
@@ -78,7 +84,7 @@ func MessageOf(err error) string {
 		return ""
 	}
 	var derr *Error
-	if errors.As(err, &derr) {
+	if errors.As(err, &derr) && derr.Code != CodeInternal {
 		return derr.Message
 	}
 	return "internal error"
