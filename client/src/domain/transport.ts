@@ -108,42 +108,68 @@ export function stepsBetween(
   return events;
 }
 
+/** A transport change the server has announced for a future instant. */
+export interface ScheduledTransport {
+  readonly transport: Transport;
+  readonly effectiveAtServerMs: number;
+}
+
 /**
- * A transport and the change already announced for later (§5.4). Keeping both
- * is what lets a client hold the old anchor for everything scheduled before
- * `effectiveAtServerMs` and switch cleanly beyond it, instead of jumping the
- * phase the instant the message arrives.
+ * The transport in force, plus the changes already announced for later (§5.4).
+ * Holding both is what lets a client keep the old anchor for everything
+ * scheduled before a boundary and switch cleanly beyond it, instead of jumping
+ * the phase the instant the message arrives.
+ *
+ * `pending` is a queue, not a slot: with a 300 ms floor and bar alignment, a
+ * maestro turning a dial can easily have two changes in flight, and the second
+ * one's anchor was computed from the first.
  */
 export interface Timeline {
   readonly active: Transport;
-  readonly pending?: {
-    readonly transport: Transport;
-    readonly effectiveAtServerMs: number;
-  };
+  readonly pending: readonly ScheduledTransport[];
+}
+
+export function newTimeline(active: Transport): Timeline {
+  return { active, pending: [] };
+}
+
+/** Queues an announced change, keeping the queue ordered by effective instant.
+ * A change re-announced for an instant already queued replaces it. */
+export function schedule(tl: Timeline, change: ScheduledTransport): Timeline {
+  const pending = tl.pending.filter(
+    (item) => item.effectiveAtServerMs !== change.effectiveAtServerMs,
+  );
+  pending.push(change);
+  pending.sort((a, b) => a.effectiveAtServerMs - b.effectiveAtServerMs);
+  return { active: tl.active, pending };
 }
 
 /** The transport that governs a given instant. */
 export function transportAt(tl: Timeline, serverMs: number): Transport {
-  if (tl.pending && serverMs >= tl.pending.effectiveAtServerMs) {
-    return tl.pending.transport;
+  let current = tl.active;
+  for (const item of tl.pending) {
+    if (serverMs < item.effectiveAtServerMs) break;
+    current = item.transport;
   }
-  return tl.active;
+  return current;
 }
 
 /**
- * Folds a pending change in once it is in the past. Called by the scheduler on
- * every tick so the timeline does not accumulate history.
+ * Folds every change that is now in the past into `active`. Called by the
+ * scheduler on each tick so the timeline does not accumulate history.
  */
 export function settle(tl: Timeline, serverMs: number): Timeline {
-  if (tl.pending && serverMs >= tl.pending.effectiveAtServerMs) {
-    return { active: tl.pending.transport };
-  }
-  return tl;
+  const due = tl.pending.filter((item) => serverMs >= item.effectiveAtServerMs);
+  if (due.length === 0) return tl;
+  return {
+    active: due[due.length - 1]!.transport,
+    pending: tl.pending.slice(due.length),
+  };
 }
 
 /**
- * Steps of a window, split at the pending change: the part before the boundary
- * is resolved with the old anchor, the part after with the new one. This is the
+ * Steps of a window, split at every announced boundary it straddles: each
+ * segment is resolved with the anchor that actually governs it. This is the
  * whole of §5.4 in one function.
  */
 export function stepsBetweenTimeline(
@@ -151,14 +177,17 @@ export function stepsBetweenTimeline(
   fromMs: number,
   toMs: number,
 ): StepEvent[] {
-  const boundary = tl.pending?.effectiveAtServerMs;
-  if (boundary === undefined || boundary <= fromMs || boundary >= toMs) {
-    return stepsBetween(transportAt(tl, fromMs), fromMs, toMs);
+  const boundaries = tl.pending
+    .map((item) => item.effectiveAtServerMs)
+    .filter((at) => at > fromMs && at < toMs);
+
+  const events: StepEvent[] = [];
+  let cursor = fromMs;
+  for (const boundary of [...boundaries, toMs]) {
+    events.push(...stepsBetween(transportAt(tl, cursor), cursor, boundary));
+    cursor = boundary;
   }
-  return [
-    ...stepsBetween(tl.active, fromMs, boundary),
-    ...stepsBetween(tl.pending!.transport, boundary, toMs),
-  ];
+  return events;
 }
 
 export function clampBpm(bpm: number): number {

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   MIN_LEAD_MS,
   beatAt,
+  newTimeline,
   nextBarBoundary,
+  schedule,
   serverMsAtBeat,
   settle,
   stepsBetween,
@@ -130,13 +132,11 @@ describe("timeline (§5.4)", () => {
   // A tempo change announced by the server: the beat at the boundary is
   // computed with the *old* tempo, which is what keeps the phase continuous.
   const active = playing(120, 0, 0);
-  const timeline: Timeline = {
-    active,
-    pending: {
-      transport: playing(90, 2000, beatAt(active, 2000)),
-      effectiveAtServerMs: 2000,
-    },
-  };
+  const slower = playing(90, 2000, beatAt(active, 2000));
+  const timeline: Timeline = schedule(newTimeline(active), {
+    transport: slower,
+    effectiveAtServerMs: 2000,
+  });
 
   it("keeps the old transport before the boundary and the new one after", () => {
     expect(transportAt(timeline, 1999).anchor.bpm).toBe(120);
@@ -144,10 +144,7 @@ describe("timeline (§5.4)", () => {
   });
 
   it("does not jump the phase at the boundary", () => {
-    expect(beatAt(timeline.active, 2000)).toBeCloseTo(
-      beatAt(timeline.pending!.transport, 2000),
-      9,
-    );
+    expect(beatAt(active, 2000)).toBeCloseTo(beatAt(slower, 2000), 9);
   });
 
   it("splits a window straddling the boundary", () => {
@@ -160,9 +157,44 @@ describe("timeline (§5.4)", () => {
     );
   });
 
-  it("folds the pending change in once it is in the past", () => {
-    expect(settle(timeline, 1999).pending).toBeDefined();
-    expect(settle(timeline, 2000).pending).toBeUndefined();
+  it("folds a change in once it is in the past", () => {
+    expect(settle(timeline, 1999).pending).toHaveLength(1);
+    expect(settle(timeline, 2000).pending).toHaveLength(0);
     expect(settle(timeline, 2000).active.anchor.bpm).toBe(90);
+  });
+
+  it("holds two changes in flight without promoting the second early", () => {
+    // A maestro turning a dial: the 300 ms floor plus bar alignment easily
+    // puts a second change on the wire before the first has landed.
+    const faster = playing(150, 4000, beatAt(slower, 4000));
+    const queued = schedule(timeline, {
+      transport: faster,
+      effectiveAtServerMs: 4000,
+    });
+
+    expect(transportAt(queued, 1000).anchor.bpm).toBe(120);
+    expect(transportAt(queued, 3000).anchor.bpm).toBe(90);
+    expect(transportAt(queued, 5000).anchor.bpm).toBe(150);
+
+    // Crossing only the first boundary must leave the second one queued.
+    const settled = settle(queued, 2500);
+    expect(settled.active.anchor.bpm).toBe(90);
+    expect(settled.pending).toHaveLength(1);
+  });
+
+  it("splits a window straddling two boundaries", () => {
+    const faster = playing(150, 2200, beatAt(slower, 2200));
+    const queued = schedule(timeline, {
+      transport: faster,
+      effectiveAtServerMs: 2200,
+    });
+    const events = stepsBetweenTimeline(queued, 1900, 2400);
+    expect(events.every((e, i) => i === 0 || e.serverMs > events[i - 1]!.serverMs)).toBe(
+      true,
+    );
+    // Nothing from the 120 BPM segment (its last step was at 1875), then two
+    // steps 167 ms apart under the 90 BPM anchor, then the 150 BPM grid takes
+    // over at 100 ms per step — off the beat the tempo change left it on.
+    expect(events.map((e) => e.serverMs)).toEqual([2000, 2167, 2280, 2380]);
   });
 });
