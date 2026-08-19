@@ -42,6 +42,8 @@ var (
 	ErrSessionFull      = newError(CodeSessionFull, true, "session is full")
 	ErrSessionClosed    = newError(CodeSessionNotFound, false, "session is closed")
 	ErrParticipantGone  = newError(CodeInvalidPayload, false, "participant is not part of this session")
+	ErrRateLimited      = newError(CodeRateLimited, true, "too many messages, slow down")
+	ErrHelloRequired    = newError(CodeUnauthorized, false, "the first message must be hello")
 	ErrUnknownGroup     = newError(CodeInvalidPayload, false, "unknown group")
 	ErrUnknownParameter = newError(CodeInvalidPayload, false, "unknown parameter key")
 )

@@ -86,6 +86,30 @@ func (u *Usecases) JoinSession(ctx context.Context, in JoinSessionInput) (JoinSe
 	}, nil
 }
 
+// PreflightJoin answers "would this connection be accepted?" before anything
+// is allocated for it: a refused musician never costs a goroutine, a socket
+// buffer or a place in the hub. JoinSession re-checks everything — this is a
+// courtesy, not the authority.
+func (u *Usecases) PreflightJoin(ctx context.Context, sid session.SessionID, role session.Role, token session.Token) error {
+	s, err := u.load(ctx, sid)
+	if err != nil {
+		return err
+	}
+	if role == session.RoleMaestro {
+		if err := s.AuthenticateMaestro(token); err != nil {
+			return err
+		}
+		if s.HasMaestro() {
+			return session.ErrMaestroTaken
+		}
+		return nil
+	}
+	if s.MusicianCount() >= s.MaxUsers() {
+		return session.ErrSessionFull
+	}
+	return nil
+}
+
 // ResolveByCode maps a short join code to a session id.
 func (u *Usecases) ResolveByCode(ctx context.Context, code session.JoinCode) (session.SessionID, error) {
 	s, err := u.repo.FindByCode(ctx, code)
