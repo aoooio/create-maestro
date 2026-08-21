@@ -211,14 +211,17 @@ func transportOf(t session.Transport) transportDTO {
 func patternOf(p session.Pattern) patternDTO {
 	steps := make([]bool, len(p.Steps))
 	velocity := make([]float64, len(p.Steps))
+	note := make([]int, len(p.Steps))
 	for i, s := range p.Steps {
 		steps[i] = s.On
 		velocity[i] = s.Velocity
+		note[i] = s.Note
 	}
 	return patternDTO{
 		TrackID:    string(p.TrackID),
 		Steps:      steps,
 		Velocity:   velocity,
+		Note:       note,
 		Generation: p.Generation,
 	}
 }

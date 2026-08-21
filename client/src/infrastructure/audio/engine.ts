@@ -21,6 +21,7 @@ import type { PlannedNote, Voicing } from "@/application/voicing";
 import type { StepEvent } from "@/domain/types";
 import type { ScheduleSink } from "@/infrastructure/clock/scheduler";
 
+import { DEFAULT_ACID, playAcidNote, type AcidSettings, type StoppableVoice } from "./acidBass";
 import {
   createDelaySend,
   createLimiter,
@@ -37,15 +38,21 @@ import type { SampleBank } from "./sampleLoader";
 const PARAM_TAU = 0.03;
 /** A one-shot still gets a start time — just a very near one. */
 const IMMEDIATE_LEAD_SEC = 0.012;
+/** Gate length for a sustained note fired outside the grid, where there is no
+ * step to take a length from. */
+const DEFAULT_GATE_SEC = 0.15;
 
 interface Track {
   readonly gain: GainNode;
   readonly filter: BiquadFilterNode;
 }
 
+/** What the engine remembers about anything it has started. Both a sample
+ * source and a synthesised acid note answer to `stop`, which is all a tempo
+ * change needs of them. */
 interface LiveSource {
   serverMs: number;
-  source: AudioBufferSourceNode;
+  source: StoppableVoice;
 }
 
 export class AudioEngine implements ScheduleSink {
@@ -61,6 +68,7 @@ export class AudioEngine implements ScheduleSink {
   private resonance = 0;
   private muted = false;
   private level = 0.8;
+  private acid: AcidSettings = DEFAULT_ACID;
 
   readonly analyser: AnalyserNode;
 
@@ -125,14 +133,21 @@ export class AudioEngine implements ScheduleSink {
   }
 
   private play(note: PlannedNote, audioTime: number, serverMs: number): void {
-    const sample = this.bank.get(note.sampleId);
-    if (!sample) return;
-
     // A time already past would make the browser start the source immediately,
     // dropping it a few milliseconds out of phase with everyone else. Better
     // to lose the note than to play it late.
     const when = Math.max(audioTime, this.ctx.currentTime);
     if (audioTime < this.ctx.currentTime - 0.05) return;
+
+    // The acid voice is synthesised rather than sampled, so it is settled
+    // before the bank is consulted — there is no buffer to find for it.
+    if (note.voice === "acid") {
+      this.playAcid(note, when, serverMs);
+      return;
+    }
+
+    const sample = this.bank.get(note.sampleId);
+    if (!sample) return;
 
     const source = this.ctx.createBufferSource();
     source.buffer = sample.buffer;
@@ -154,6 +169,32 @@ export class AudioEngine implements ScheduleSink {
       source.disconnect();
       voiceGain.disconnect();
     };
+  }
+
+  /** One acid note, built for itself. It goes through the same track gain as
+   * everything else, so the group bus, the sends and the limiter still see it. */
+  private playAcid(note: PlannedNote, when: number, serverMs: number): void {
+    if (note.freq === undefined) return;
+
+    const voice: StoppableVoice = playAcidNote(
+      this.ctx,
+      this.track(note.trackId).gain,
+      {
+        when,
+        freq: note.freq,
+        velocity: note.velocity,
+        accent: note.accent === true,
+        durationSec: note.durationSec ?? DEFAULT_GATE_SEC,
+      },
+      this.acid,
+      // Runs on `onended`, long after `voice` is bound. The voice disconnects
+      // its own nodes; the engine only has to stop remembering it.
+      () => {
+        this.live = this.live.filter((item) => item.source !== voice);
+      },
+    );
+
+    this.live.push({ serverMs, source: voice });
   }
 
   private track(trackId: string): Track {
@@ -203,6 +244,25 @@ export class AudioEngine implements ScheduleSink {
         return;
       case "delay":
         this.delay.wet.gain.setTargetAtTime(asNumber(value), now, PARAM_TAU);
+        return;
+      // The acid settings are read when a note is built, not while one is
+      // sounding: no signal passes through them, so there is nothing to ramp
+      // and a plain assignment cannot click. `bassRoot` is not here at all —
+      // it transposes the line, which is a decision the voicing makes.
+      case "bassCutoff":
+        this.acid = { ...this.acid, cutoff: asNumber(value) };
+        return;
+      case "bassResonance":
+        this.acid = { ...this.acid, resonance: asNumber(value) };
+        return;
+      case "bassEnvMod":
+        this.acid = { ...this.acid, envMod: asNumber(value) };
+        return;
+      case "bassDecay":
+        this.acid = { ...this.acid, decay: asNumber(value) };
+        return;
+      case "bassAccent":
+        this.acid = { ...this.acid, accent: asNumber(value) };
         return;
       default:
         // `density` shapes the voicing, not the graph.

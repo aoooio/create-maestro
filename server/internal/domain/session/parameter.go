@@ -12,6 +12,15 @@ const (
 	ParamReverb    ParameterKey = "reverb"
 	ParamDelay     ParameterKey = "delay"
 	ParamMute      ParameterKey = "mute"
+
+	// The acid bass has its own filter, rendered per note rather than on the
+	// shared track bus, so it carries its own keys.
+	ParamBassCutoff    ParameterKey = "bassCutoff"
+	ParamBassResonance ParameterKey = "bassResonance"
+	ParamBassEnvMod    ParameterKey = "bassEnvMod"
+	ParamBassDecay     ParameterKey = "bassDecay"
+	ParamBassAccent    ParameterKey = "bassAccent"
+	ParamBassRoot      ParameterKey = "bassRoot"
 )
 
 // ParameterKind decides how a value is clamped and how it reaches the wire.
@@ -40,6 +49,15 @@ var parameterRegistry = map[ParameterKey]ParameterSpec{
 	ParamReverb:    {Key: ParamReverb, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.2},
 	ParamDelay:     {Key: ParamDelay, Kind: KindContinuous, Min: 0, Max: 1, Default: 0},
 	ParamMute:      {Key: ParamMute, Kind: KindBool, Min: 0, Max: 1, Default: 0},
+
+	ParamBassCutoff:    {Key: ParamBassCutoff, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.35},
+	ParamBassResonance: {Key: ParamBassResonance, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.7},
+	ParamBassEnvMod:    {Key: ParamBassEnvMod, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.6},
+	ParamBassDecay:     {Key: ParamBassDecay, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.4},
+	ParamBassAccent:    {Key: ParamBassAccent, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.5},
+	// A transposition in semitones rather than a 0..1 dial: the bounds of a
+	// spec are per key, so the registry can carry it as it is.
+	ParamBassRoot: {Key: ParamBassRoot, Kind: KindContinuous, Min: 0, Max: 11, Default: 0},
 }
 
 // LookupParameter returns the spec of a key, or an error for unknown keys —

@@ -11,9 +11,8 @@ import type { SessionController } from "@/application/session";
 import { useSessionStore } from "@/application/store/sessionStore";
 import { effectiveParameter } from "@/domain/parameter";
 import { groupBadge, groupSkin, targetGroup } from "@/domain/group";
+import { Fader } from "@/ui/shared/Fader";
 import { Panel } from "@/ui/shared/Panel";
-
-const FADER_STEPS = 12;
 
 export function GroupMixer({ controller }: { controller: SessionController | null }) {
   const groups = useSessionStore((state) => state.groups);
@@ -81,46 +80,5 @@ export function GroupMixer({ controller }: { controller: SessionController | nul
         {groups.length === 0 ? <p className="text-dim text-sm">&gt; en attente de l’état…</p> : null}
       </div>
     </Panel>
-  );
-}
-
-/** A fader drawn in blocks. It is a range input underneath, so it keeps
- * keyboard control and screen-reader semantics for free. */
-function Fader({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-}) {
-  const filled = Math.round(value * FADER_STEPS);
-  return (
-    <label className="mb-2 block">
-      <span className="mb-1 flex justify-between text-[10px] tracking-[0.2em] text-dim">
-        <span>{label}</span>
-        <span className="tabular-nums">{Math.round(value * 100)}</span>
-      </span>
-      {/* The blocks are the fader; the range input sits invisibly on top of
-          them, so dragging lands where it looks like it should and keyboard
-          and screen-reader support come for free. */}
-      <span className="relative block h-6">
-        <span aria-hidden className="glow absolute inset-0 flex items-center text-sm leading-none">
-          {"▓".repeat(filled)}
-          <span className="text-dimmer">{"░".repeat(FADER_STEPS - filled)}</span>
-        </span>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={value}
-          onChange={(event) => onChange(Number(event.target.value))}
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-          aria-label={label}
-        />
-      </span>
-    </label>
   );
 }

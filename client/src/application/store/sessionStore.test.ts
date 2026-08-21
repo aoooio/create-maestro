@@ -23,7 +23,7 @@ function snapshot(generation: number): ServerMessage {
     data: {
       transport: transport(120, generation),
       params: [{ key: "cutoff", value: 0.5, target: { group: 0 } }],
-      patterns: [{ trackId: "kick", steps: [{ on: true, velocity: 1 }], generation }],
+      patterns: [{ trackId: "kick", steps: [{ on: true, velocity: 1, note: 36 }], generation }],
       groups: [{ id: 1, label: "HIGH", count: 2 }],
       generation,
       serverTimeMs: 1000,
@@ -76,7 +76,7 @@ describe("§4.4 idempotence", () => {
     apply({
       type: "pattern.updated",
       data: {
-        pattern: { trackId: "hat", steps: [{ on: true, velocity: 1 }], generation: 11 },
+        pattern: { trackId: "hat", steps: [{ on: true, velocity: 1, note: 36 }], generation: 11 },
         generation: 11,
       },
     });

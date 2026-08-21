@@ -17,6 +17,9 @@ import { useMemo, useRef, useState } from "react";
 import type { SessionController } from "@/application/session";
 import { useTransportPosition } from "@/application/hooks/useTransportPosition";
 import { useSessionStore } from "@/application/store/sessionStore";
+import { ACCENT_THRESHOLD } from "@/application/voicing";
+import { clampNote, noteName } from "@/domain/note";
+import { effectiveParameter } from "@/domain/parameter";
 import { emptyGrid, resizeGrid } from "@/domain/pattern";
 import type { Step } from "@/domain/types";
 import { DEFAULT_TRACKS } from "@/infrastructure/audio/voices";
@@ -33,11 +36,36 @@ interface Draft {
   basedOnGeneration: number;
 }
 
+/** What a screen reader is told about one cell. A pitched lane has two more
+ * things to say about it than a drum lane does. */
+function cellLabel(
+  label: string,
+  index: number,
+  step: Step,
+  pitched: boolean | undefined,
+  transpose: number,
+): string {
+  const state = step.on ? "actif" : "inactif";
+  if (!pitched) return `${label} pas ${index + 1} ${state}`;
+  const pitch = noteName(clampNote(step.note + transpose));
+  const accent = step.on && step.velocity >= ACCENT_THRESHOLD ? ", accentué" : "";
+  return `${label} pas ${index + 1} ${state}, note ${pitch}${accent}`;
+}
+
+/** An accented cell and a plain one have to be told apart at a glance, from
+ * across a stage. */
+const ACCENT_VELOCITY = 1;
+const PLAIN_VELOCITY = 0.6;
+
 export function StepSequencer({ controller }: { controller: SessionController | null }) {
   const patterns = useSessionStore((state) => state.patterns);
   const timeline = useSessionStore((state) => state.timeline);
+  const params = useSessionStore((state) => state.params);
   const transport = timeline.active;
   const stepCount = transport.beatsPerBar * transport.stepsPerBeat;
+  // The note row shows what will sound, so it reads through the same ROOT the
+  // voicing applies.
+  const transpose = Math.round(Number(effectiveParameter(params, "bassRoot", 0)));
 
   const playheadRef = useRef<HTMLDivElement>(null);
   const positionRef = useRef<HTMLSpanElement>(null);
@@ -77,12 +105,15 @@ export function StepSequencer({ controller }: { controller: SessionController | 
     return result;
   }, [patterns, drafts, stepCount]);
 
-  function toggle(trackId: string, index: number) {
+  /**
+   * The single write path: every edit — on/off, pitch, accent — goes through
+   * it, so they all share the one optimistic draft and the server's word
+   * replaces all of them the same way.
+   */
+  function edit(trackId: string, index: number, change: (step: Step) => Step) {
     const grid = grids.get(trackId);
     if (!grid || !controller) return;
-    const next = grid.map((step, i) =>
-      i === index ? { on: !step.on, velocity: step.on ? 0 : 1 } : step,
-    );
+    const next = grid.map((step, i) => (i === index ? change(step) : step));
     setDrafts((current) => {
       const pruned = new Map<string, Draft>();
       // Drop the drafts the server has already answered, so the map does not
@@ -96,6 +127,48 @@ export function StepSequencer({ controller }: { controller: SessionController | 
       });
     });
     controller.setPattern(trackId, next);
+  }
+
+  const toggle = (trackId: string, index: number) =>
+    // The note is deliberately carried over: a cell switched off and back on
+    // must return the pitch it had, not a default.
+    edit(trackId, index, (step) => ({
+      ...step,
+      on: !step.on,
+      velocity: step.on ? 0 : ACCENT_VELOCITY,
+    }));
+
+  const nudgeNote = (trackId: string, index: number, semitones: number) =>
+    edit(trackId, index, (step) => ({ ...step, note: clampNote(step.note + semitones) }));
+
+  const toggleAccent = (trackId: string, index: number) =>
+    edit(trackId, index, (step) => ({
+      ...step,
+      velocity: step.velocity >= ACCENT_THRESHOLD ? PLAIN_VELOCITY : ACCENT_VELOCITY,
+    }));
+
+  /** Everything the wheel does, reachable from the keyboard — the console has
+   * to be playable without a mouse. */
+  function onPitchedKey(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    trackId: string,
+    index: number,
+  ) {
+    const octave = event.shiftKey ? 12 : 1;
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      nudgeNote(trackId, index, octave);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      nudgeNote(trackId, index, -octave);
+      return;
+    }
+    if (event.key === "Enter" && event.shiftKey) {
+      event.preventDefault();
+      toggleAccent(trackId, index);
+    }
   }
 
   return (
@@ -128,24 +201,56 @@ export function StepSequencer({ controller }: { controller: SessionController | 
           {DEFAULT_TRACKS.map((track) => {
             const grid = grids.get(track.trackId) ?? [];
             return (
-              <div key={track.trackId} className="flex items-center gap-2">
-                <span className="w-14 shrink-0 text-[11px] tracking-wider text-dim">
-                  {track.label}
-                </span>
-                {grid.map((step, index) => (
-                  <button
-                    key={index}
-                    type="button"
-                    onClick={() => toggle(track.trackId, index)}
-                    aria-label={`${track.label} pas ${index + 1} ${step.on ? "actif" : "inactif"}`}
-                    aria-pressed={step.on}
-                    className={`h-8 w-6 shrink-0 text-center text-sm leading-8 transition-none ${
-                      step.on ? "glow-strong" : "text-dimmer hover:text-dim"
-                    } ${index % transport.stepsPerBeat === 0 ? "border-l border-dimmer" : ""}`}
-                  >
-                    {step.on ? "█" : "░"}
-                  </button>
-                ))}
+              <div key={track.trackId}>
+                <div className="flex items-center gap-2">
+                  <span className="w-14 shrink-0 text-[11px] tracking-wider text-dim">
+                    {track.label}
+                  </span>
+                  {grid.map((step, index) => {
+                    const accented = step.on && step.velocity >= ACCENT_THRESHOLD;
+                    return (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => toggle(track.trackId, index)}
+                        onWheel={
+                          track.pitched
+                            ? (event) =>
+                                nudgeNote(
+                                  track.trackId,
+                                  index,
+                                  (event.deltaY < 0 ? 1 : -1) * (event.shiftKey ? 12 : 1),
+                                )
+                            : undefined
+                        }
+                        onKeyDown={
+                          track.pitched
+                            ? (event) => onPitchedKey(event, track.trackId, index)
+                            : undefined
+                        }
+                        aria-label={cellLabel(track.label, index, step, track.pitched, transpose)}
+                        aria-pressed={step.on}
+                        className={`h-8 w-6 shrink-0 text-center text-sm leading-8 transition-none ${
+                          step.on ? "glow-strong" : "text-dimmer hover:text-dim"
+                        } ${index % transport.stepsPerBeat === 0 ? "border-l border-dimmer" : ""}`}
+                      >
+                        {step.on ? (accented ? "█" : "▓") : "░"}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* The pitches, under the cells they belong to. A pitched lane
+                    is unreadable without them: the grid says when, not what. */}
+                {track.pitched ? (
+                  <div className="flex gap-2 pl-16 text-[10px] text-dimmer tabular-nums">
+                    {grid.map((step, index) => (
+                      <span key={index} className="w-6 shrink-0 text-center">
+                        {step.on ? noteName(clampNote(step.note + transpose)) : "··"}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             );
           })}

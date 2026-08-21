@@ -14,6 +14,7 @@
  * makes "do these two clients agree?" a unit test rather than a rehearsal.
  */
 
+import { clampNote, midiToFreq } from "@/domain/note";
 import { stepAt } from "@/domain/pattern";
 import type { Pattern, StepEvent } from "@/domain/types";
 
@@ -24,6 +25,13 @@ export interface PlannedNote {
   readonly velocity: number;
   /** Pitched voices only. */
   readonly freq?: number;
+  /** How the engine should make the sound. Absent means a sample, which is
+   * every voice but the acid bass. */
+  readonly voice?: "sample" | "acid";
+  /** Acid only: a 303's accent, from the step's velocity. */
+  readonly accent?: boolean;
+  /** Acid only: how long to hold the note, i.e. one step. */
+  readonly durationSec?: number;
 }
 
 export type Voicing = (event: StepEvent) => readonly PlannedNote[];
@@ -98,13 +106,27 @@ export function musicianVoicing(options: MusicianVoicingOptions): Voicing {
 export interface TrackBinding {
   readonly trackId: string;
   readonly sampleId: string;
+  /** A pitched lane reads the note of each cell and plays the acid voice. */
+  readonly pitched?: boolean;
+}
+
+/** Above this, a step counts as accented — the 303's one expressive control,
+ * and here the only thing a cell's velocity is used for on a pitched track. */
+export const ACCENT_THRESHOLD = 0.9;
+
+export interface MaestroVoicingOptions {
+  /** Semitones added to every pitched note: the console's ROOT. */
+  readonly transpose?: number;
 }
 
 /** The maestro's base music: whatever the sequencer grid says. */
 export function maestroVoicing(
   patterns: ReadonlyMap<string, Pattern>,
   tracks: readonly TrackBinding[],
+  options: MaestroVoicingOptions = {},
 ): Voicing {
+  const transpose = Math.round(options.transpose ?? 0);
+
   return (event: StepEvent) => {
     const notes: PlannedNote[] = [];
     for (const track of tracks) {
@@ -112,6 +134,18 @@ export function maestroVoicing(
       if (!pattern) continue;
       const step = stepAt(pattern, event.stepInBar);
       if (!step?.on) continue;
+      if (track.pitched) {
+        notes.push({
+          trackId: track.trackId,
+          sampleId: track.sampleId,
+          velocity: step.velocity,
+          voice: "acid",
+          freq: midiToFreq(clampNote(step.note + transpose)),
+          accent: step.velocity >= ACCENT_THRESHOLD,
+          durationSec: event.secondsPerStep,
+        });
+        continue;
+      }
       notes.push({
         trackId: track.trackId,
         sampleId: track.sampleId,

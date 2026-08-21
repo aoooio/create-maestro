@@ -282,8 +282,8 @@ Réserve d'évolution : tout champ inconnu est ignoré silencieusement (forward 
 | `hello` | tous | `{ name?, clientVersion, capabilities: { webaudio, webgl } }` | Premier message obligatoire, sinon fermeture à 5 s. |
 | `time.ping` | tous | `{ clientSendMs }` | Voir §5. |
 | `transport.set` | maestro | `{ bpm?, state?, beatsPerBar?, alignTo: "bar"\|"immediate" }` | Rejeté si musicien. |
-| `pattern.set` | maestro | `{ trackId, steps: [bool], velocity?: [float] }` | |
-| `param.set` | maestro | `{ key, value, target: "all"\|"group:1"\|"group:2" }` | Bornes validées côté domaine. |
+| `pattern.set` | maestro | `{ trackId, steps: [bool], velocity?: [float], note?: [int] }` | `note` porte la hauteur MIDI de chaque cellule, pour une piste jouée (la basse acide) ; absent sur une piste percussive. Champ optionnel, donc pas de rupture de version (§4.1). |
+| `param.set` | maestro | `{ key, value, target: "all"\|"group:1"\|"group:2" }` | Bornes validées côté domaine. Clés : `cutoff`, `resonance`, `density`, `gain`, `reverb`, `delay`, `mute`, et pour la basse acide `bassCutoff`, `bassResonance`, `bassEnvMod`, `bassDecay`, `bassAccent`, `bassRoot` (transposition en demi-tons, 0..11). |
 | `trigger` | musicien | `{ kind, intensity: 0..1, atBeat? }` | Classe `ephemeral`. |
 | `state.request` | tous | `{}` | Resynchronisation après reconnexion. |
 
@@ -296,7 +296,7 @@ Réserve d'évolution : tout champ inconnu est ignoré silencieusement (forward 
 | `time.pong` | `{ clientSendMs, serverRecvMs, serverSendMs }` | critical |
 | `transport.updated` | `{ anchor: {atServerMs, atBeat, bpm}, state, beatsPerBar, effectiveAtServerMs, generation }` | critical |
 | `param.updated` | `{ key, value, target, generation }` | critical |
-| `pattern.updated` | `{ trackId, steps, generation }` | critical |
+| `pattern.updated` | `{ trackId, steps, velocity, note, generation }` | critical |
 | `group.assigned` | `{ groupId, reason }` | critical |
 | `participant.joined` / `participant.left` | `{ participantId, name, groupId, counts }` | ephemeral |
 | `participant.trigger` | `{ participantId, groupId, kind, intensity }` | ephemeral |
@@ -453,6 +453,7 @@ Même règle de dépendance qu'en Go : `ui → application → domain`, `infrast
 
 **Responsabilités**
 - Rendu de la **musique de base** en local : séquenceur de samples type boîte à rythmes (16 steps × N pistes), aligné sur le transport.
+- Piste **BASS** jouée : une voix acide type 303, synthétisée note par note plutôt que jouée depuis un buffer — un balayage de filtre par note ne survit pas à une transposition par `playbackRate`. La hauteur est choisie par pas dans la grille (molette ou ↑↓, Maj pour l'octave), l'accent par la vélocité de la cellule (Maj+Entrée), et le filtre est réglé au panneau : cutoff, résonance, env mod, decay, accent, plus un ROOT qui transpose la ligne entière.
 - Contrôle du transport : play/stop, BPM (dial + saisie), signature.
 - Envoi des paramètres vers les clients — globalement ou par groupe (`target: "group:1"`).
 - Mixage des groupes : mute / solo / gain perçu, mute d'un groupe = `param.set` vers ce groupe.
