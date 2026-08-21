@@ -22,6 +22,7 @@ import { CrtScreen } from "@/ui/shared/CrtScreen";
 import { Meter, Panel } from "@/ui/shared/Panel";
 import { OfflineBanner, SyncBadge } from "@/ui/shared/SyncBadge";
 
+import { AcidBassPanel } from "./AcidBassPanel";
 import { GroupMixer } from "./GroupMixer";
 import { ParticipantWall, useTriggerSink } from "./ParticipantWall";
 import { StepSequencer } from "./StepSequencer";
@@ -93,6 +94,7 @@ export function MaestroConsole({
 
         <TempoDial controller={controller} />
         <StepSequencer controller={controller} />
+        <AcidBassPanel controller={controller} />
 
         <div className="grid gap-3 lg:grid-cols-2">
           <GroupMixer controller={controller} />

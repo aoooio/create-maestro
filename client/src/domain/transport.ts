@@ -91,6 +91,7 @@ export function stepsBetween(
   const beatTo = beatAt(t, toMs);
 
   const events: StepEvent[] = [];
+  const secondsPerStep = 60 / (t.anchor.bpm * perBeat);
   let index = Math.ceil(beatFrom * perBeat - EPSILON);
   while (index / perBeat < beatTo - EPSILON && events.length < MAX_STEPS_PER_WINDOW) {
     const beat = index / perBeat;
@@ -102,6 +103,7 @@ export function stepsBetween(
       stepInBar: inBar,
       bar: Math.floor(beat / t.beatsPerBar),
       beat,
+      secondsPerStep,
     });
     index++;
   }

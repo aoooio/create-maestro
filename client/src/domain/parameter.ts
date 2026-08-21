@@ -12,7 +12,13 @@ export type ParameterKey =
   | "gain"
   | "reverb"
   | "delay"
-  | "mute";
+  | "mute"
+  | "bassCutoff"
+  | "bassResonance"
+  | "bassEnvMod"
+  | "bassDecay"
+  | "bassAccent"
+  | "bassRoot";
 
 export type ParameterKind = "continuous" | "bool";
 
@@ -34,6 +40,16 @@ export const PARAMETER_REGISTRY: Readonly<Record<ParameterKey, ParameterSpec>> =
   reverb: { key: "reverb", kind: "continuous", min: 0, max: 1, default: 0.2, label: "REVERB" },
   delay: { key: "delay", kind: "continuous", min: 0, max: 1, default: 0, label: "DELAY" },
   mute: { key: "mute", kind: "bool", min: 0, max: 1, default: 0, label: "MUTE" },
+
+  // The acid bass builds its filter per note rather than on the shared track
+  // bus, so its cutoff and resonance are its own and not the ones above.
+  bassCutoff: { key: "bassCutoff", kind: "continuous", min: 0, max: 1, default: 0.35, label: "CUTOFF" },
+  bassResonance: { key: "bassResonance", kind: "continuous", min: 0, max: 1, default: 0.7, label: "RESO" },
+  bassEnvMod: { key: "bassEnvMod", kind: "continuous", min: 0, max: 1, default: 0.6, label: "ENV MOD" },
+  bassDecay: { key: "bassDecay", kind: "continuous", min: 0, max: 1, default: 0.4, label: "DECAY" },
+  bassAccent: { key: "bassAccent", kind: "continuous", min: 0, max: 1, default: 0.5, label: "ACCENT" },
+  // Semitones, not a 0..1 dial: a spec carries its own bounds.
+  bassRoot: { key: "bassRoot", kind: "continuous", min: 0, max: 11, default: 0, label: "ROOT" },
 };
 
 export const PARAMETER_KEYS = Object.keys(PARAMETER_REGISTRY) as ParameterKey[];

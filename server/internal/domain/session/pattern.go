@@ -10,10 +10,21 @@ const MaxSteps = 64
 // MaxTracks caps the number of lanes a session can hold.
 const MaxTracks = 32
 
+// Bounds of a step's pitch, as MIDI note numbers. Percussive tracks ignore it;
+// a pitched lane (the acid bass) reads it for every cell.
+const (
+	MinNote     = 0
+	MaxNote     = 127
+	DefaultNote = 36 // C2, the register a bass line sits in
+)
+
 // Step is one cell of the grid.
 type Step struct {
 	On       bool
 	Velocity float64
+	// Note is the MIDI pitch of the cell. It is meaningless on a percussive
+	// track, which is why it is never required on the wire.
+	Note int
 }
 
 // Pattern is the step grid of a track.
@@ -43,6 +54,12 @@ func NewPattern(id TrackID, steps []Step) (Pattern, error) {
 			s.Velocity = 1
 		case s.On && s.Velocity == 0:
 			s.Velocity = 1 // an active step with no velocity plays at full level
+		}
+		switch {
+		case s.Note < MinNote:
+			s.Note = MinNote
+		case s.Note > MaxNote:
+			s.Note = MaxNote
 		}
 		clamped[i] = s
 	}

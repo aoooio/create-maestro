@@ -11,6 +11,7 @@
 import { z } from "zod";
 
 import { parseTarget } from "@/domain/group";
+import { DEFAULT_BASS_NOTE } from "@/domain/note";
 import type {
   GroupCount,
   ParameterEntry,
@@ -69,6 +70,7 @@ const patternSchema = z.object({
   trackId: z.string(),
   steps: z.array(z.boolean()),
   velocity: z.array(z.number()).optional(),
+  note: z.array(z.number()).optional(),
   generation: z.number().optional(),
 });
 
@@ -320,7 +322,13 @@ function toParameterEntry(d: z.infer<typeof paramSchema>): ParameterEntry {
 function toPattern(d: z.infer<typeof patternSchema>): Pattern {
   return {
     trackId: d.trackId,
-    steps: d.steps.map((on, i) => ({ on, velocity: d.velocity?.[i] ?? (on ? 1 : 0) })),
+    steps: d.steps.map((on, i) => ({
+      on,
+      velocity: d.velocity?.[i] ?? (on ? 1 : 0),
+      // A percussive track sends no pitch at all, and an older server sends
+      // none for any track: either way the cell still needs a note to hold.
+      note: d.note?.[i] ?? DEFAULT_BASS_NOTE,
+    })),
     generation: d.generation ?? 0,
   };
 }
@@ -340,7 +348,10 @@ export type ClientMessage =
         alignTo: "bar" | "immediate";
       };
     }
-  | { t: "pattern.set"; d: { trackId: string; steps: boolean[]; velocity?: number[] } }
+  | {
+      t: "pattern.set";
+      d: { trackId: string; steps: boolean[]; velocity?: number[]; note?: number[] };
+    }
   | { t: "param.set"; d: { key: string; value: number | boolean; target: string } }
   | { t: "trigger"; d: { kind: string; intensity: number; atBeat?: number } }
   | { t: "state.request"; d: Record<string, never> };

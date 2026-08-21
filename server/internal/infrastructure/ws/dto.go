@@ -92,20 +92,28 @@ type patternSetDTO struct {
 	TrackID  string    `json:"trackId"`
 	Steps    []bool    `json:"steps"`
 	Velocity []float64 `json:"velocity"`
+	Note     []int     `json:"note"`
 }
 
-// toSteps merges the two parallel arrays of the wire format into the domain
-// step list. A shorter velocity array is not an error: the missing cells play
-// at full level.
+// toSteps merges the parallel arrays of the wire format into the domain step
+// list. A shorter velocity array is not an error: the missing cells play at
+// full level. An absent note array is the ordinary case — only a pitched
+// track sends one — and those cells take the default pitch.
 func (d patternSetDTO) toSteps() ([]session.Step, error) {
 	if len(d.Velocity) != 0 && len(d.Velocity) != len(d.Steps) {
 		return nil, session.Invalidf("velocity has %d entries for %d steps", len(d.Velocity), len(d.Steps))
 	}
+	if len(d.Note) != 0 && len(d.Note) != len(d.Steps) {
+		return nil, session.Invalidf("note has %d entries for %d steps", len(d.Note), len(d.Steps))
+	}
 	steps := make([]session.Step, len(d.Steps))
 	for i, on := range d.Steps {
-		steps[i] = session.Step{On: on}
+		steps[i] = session.Step{On: on, Note: session.DefaultNote}
 		if i < len(d.Velocity) {
 			steps[i].Velocity = d.Velocity[i]
+		}
+		if i < len(d.Note) {
+			steps[i].Note = d.Note[i]
 		}
 	}
 	return steps, nil
@@ -194,6 +202,7 @@ type patternDTO struct {
 	TrackID    string    `json:"trackId"`
 	Steps      []bool    `json:"steps"`
 	Velocity   []float64 `json:"velocity"`
+	Note       []int     `json:"note"`
 	Generation uint64    `json:"generation"`
 }
 

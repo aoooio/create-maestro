@@ -39,6 +39,9 @@ export interface Transport {
 export interface Step {
   readonly on: boolean;
   readonly velocity: number;
+  /** MIDI pitch of the cell. Meaningless on a percussive track, which is why
+   * it never has to be sent for one. */
+  readonly note: number;
 }
 
 export interface Pattern {
@@ -56,6 +59,11 @@ export interface StepEvent {
   readonly stepInBar: number;
   readonly bar: number;
   readonly beat: number;
+  /** How long this step lasts, at the tempo that governs it. A sustained voice
+   * needs a gate length, and taking it from the transport "in force" would be
+   * wrong for a step planned past an announced tempo change (§5.4) — so it is
+   * resolved here, with the anchor the step was actually placed against. */
+  readonly secondsPerStep: number;
 }
 
 /** A musical position projected onto the bar/step grid of a transport. */

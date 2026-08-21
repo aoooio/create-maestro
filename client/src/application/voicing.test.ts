@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { midiToFreq } from "@/domain/note";
 import { newPattern } from "@/domain/pattern";
 import { stepsBetween } from "@/domain/transport";
 import type { StepEvent, Transport } from "@/domain/types";
@@ -82,14 +83,14 @@ describe("musician layer", () => {
 describe("maestro layer", () => {
   const patterns = new Map([
     ["kick", newPattern("kick", [
-      { on: true, velocity: 1 },
-      { on: false, velocity: 0 },
-      { on: false, velocity: 0 },
-      { on: false, velocity: 0 },
+      { on: true, velocity: 1, note: 36 },
+      { on: false, velocity: 0, note: 36 },
+      { on: false, velocity: 0, note: 36 },
+      { on: false, velocity: 0, note: 36 },
     ])],
     ["hat", newPattern("hat", [
-      { on: false, velocity: 0 },
-      { on: true, velocity: 0.4 },
+      { on: false, velocity: 0, note: 36 },
+      { on: true, velocity: 0.4, note: 36 },
     ])],
   ]);
   const tracks = [
@@ -101,7 +102,7 @@ describe("maestro layer", () => {
   it("plays exactly what the grid says", () => {
     const voicing = maestroVoicing(patterns, tracks);
     const step = (stepInBar: number) =>
-      voicing({ serverMs: 0, index: stepInBar, stepInBar, bar: 0, beat: 0 }).map((n) => n.trackId);
+      voicing({ serverMs: 0, index: stepInBar, stepInBar, bar: 0, beat: 0, secondsPerStep: 0.125 }).map((n) => n.trackId);
 
     // The kick grid is 4 long and the hat grid 2, so both wrap over the bar:
     // a 16-step bar plays each of them four and eight times over.
@@ -115,15 +116,76 @@ describe("maestro layer", () => {
 
   it("carries the velocity of the step", () => {
     const voicing = maestroVoicing(patterns, tracks);
-    const notes = voicing({ serverMs: 0, index: 1, stepInBar: 1, bar: 0, beat: 0 });
+    const notes = voicing({ serverMs: 0, index: 1, stepInBar: 1, bar: 0, beat: 0, secondsPerStep: 0.125 });
     expect(notes[0]!.trackId).toBe("hat");
     expect(notes[0]!.velocity).toBe(0.4);
   });
 
   it("ignores a track with no pattern yet", () => {
     const voicing = maestroVoicing(patterns, tracks);
-    const played = voicing({ serverMs: 0, index: 0, stepInBar: 0, bar: 0, beat: 0 });
+    const played = voicing({ serverMs: 0, index: 0, stepInBar: 0, bar: 0, beat: 0, secondsPerStep: 0.125 });
     expect(played.map((note) => note.trackId)).not.toContain("snare");
+  });
+});
+
+describe("acid bass lane", () => {
+  const bassTracks = [{ trackId: "bass", sampleId: "acid", label: "BASS", pitched: true }];
+  const line = new Map([
+    [
+      "bass",
+      newPattern("bass", [
+        { on: true, velocity: 1, note: 36 }, // C2, accented
+        { on: true, velocity: 0.6, note: 43 }, // G2, plain
+        { on: false, velocity: 0, note: 48 },
+      ]),
+    ],
+  ]);
+  const at = (stepInBar: number, secondsPerStep = 0.125) =>
+    ({ serverMs: 0, index: stepInBar, stepInBar, bar: 0, beat: 0, secondsPerStep }) as const;
+
+  it("plays the note written in the cell", () => {
+    const voicing = maestroVoicing(line, bassTracks);
+    const [note] = voicing(at(0));
+    expect(note!.voice).toBe("acid");
+    expect(note!.freq!).toBeCloseTo(midiToFreq(36), 6);
+  });
+
+  it("transposes the whole line by the root", () => {
+    const plain = maestroVoicing(line, bassTracks);
+    const inD = maestroVoicing(line, bassTracks, { transpose: 2 });
+    for (const step of [0, 1]) {
+      const before = plain(at(step))[0]!.freq!;
+      const after = inD(at(step))[0]!.freq!;
+      // Two semitones up is the same ratio wherever you start.
+      expect(after / before).toBeCloseTo(2 ** (2 / 12), 6);
+    }
+  });
+
+  it("reads the accent off the velocity of the step", () => {
+    const voicing = maestroVoicing(line, bassTracks);
+    expect(voicing(at(0))[0]!.accent).toBe(true);
+    expect(voicing(at(1))[0]!.accent).toBe(false);
+  });
+
+  it("holds a note for exactly one step, whatever the tempo", () => {
+    const voicing = maestroVoicing(line, bassTracks);
+    expect(voicing(at(0))[0]!.durationSec).toBe(0.125);
+    expect(voicing(at(0, 0.25))[0]!.durationSec).toBe(0.25);
+  });
+
+  it("says nothing on a step that is off, whatever its note", () => {
+    const voicing = maestroVoicing(line, bassTracks);
+    expect(voicing(at(2))).toEqual([]);
+  });
+
+  it("leaves a percussive lane unpitched", () => {
+    // A drum track shares the grid — and now the note field — but must not
+    // gain a frequency from it.
+    const drums = new Map([["kick", newPattern("kick", [{ on: true, velocity: 1, note: 36 }])]]);
+    const voicing = maestroVoicing(drums, [{ trackId: "kick", sampleId: "kick" }]);
+    const [note] = voicing(at(0));
+    expect(note!.voice).toBeUndefined();
+    expect(note!.freq).toBeUndefined();
   });
 });
 

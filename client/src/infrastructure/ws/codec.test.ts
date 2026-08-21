@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_BASS_NOTE } from "@/domain/note";
+
 import { DecodeError, ProtocolVersionError, decode, encode } from "./codec";
 
 function frame(type: string, data: unknown, version = 1): string {
@@ -34,8 +36,8 @@ describe("decode", () => {
     expect(message.data.params[1]!.target).toEqual({ group: 2 });
     expect(message.data.params[1]!.value).toBe(true);
     expect(message.data.patterns[0]!.steps).toEqual([
-      { on: true, velocity: 0.8 },
-      { on: false, velocity: 0 },
+      { on: true, velocity: 0.8, note: DEFAULT_BASS_NOTE },
+      { on: false, velocity: 0, note: DEFAULT_BASS_NOTE },
     ]);
   });
 
@@ -46,6 +48,30 @@ describe("decode", () => {
     if (message.type !== "pattern.updated") throw new Error("wrong type");
     expect(message.data.pattern.steps[0]!.velocity).toBe(1);
     expect(message.data.pattern.steps[1]!.velocity).toBe(0);
+  });
+
+  it("carries the pitch of a pitched track", () => {
+    const message = decode(
+      frame("pattern.updated", {
+        trackId: "bass",
+        steps: [true, true],
+        velocity: [1, 0.6],
+        note: [36, 43],
+        generation: 4,
+      }),
+    );
+    if (message.type !== "pattern.updated") throw new Error("wrong type");
+    expect(message.data.pattern.steps.map((step) => step.note)).toEqual([36, 43]);
+  });
+
+  it("defaults a missing pitch, as a percussive track sends none", () => {
+    // Also what an older server produces for every track: the field is
+    // optional on the wire precisely so that stays readable (§4.1).
+    const message = decode(
+      frame("pattern.updated", { trackId: "kick", steps: [true], generation: 5 }),
+    );
+    if (message.type !== "pattern.updated") throw new Error("wrong type");
+    expect(message.data.pattern.steps[0]!.note).toBe(DEFAULT_BASS_NOTE);
   });
 
   it("carries the effective instant of a transport change", () => {

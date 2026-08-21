@@ -31,7 +31,7 @@ function snapshot(generation: number, kickSteps: boolean[]): ServerMessage {
       patterns: [
         {
           trackId: "kick",
-          steps: kickSteps.map((on) => ({ on, velocity: on ? 1 : 0 })),
+          steps: kickSteps.map((on) => ({ on, velocity: on ? 1 : 0, note: 36 })),
           generation,
         },
       ],
@@ -103,7 +103,7 @@ describe("StepSequencer", () => {
       data: {
         pattern: {
           trackId: "kick",
-          steps: [true, false, false, false].map((on) => ({ on, velocity: on ? 1 : 0 })),
+          steps: [true, false, false, false].map((on) => ({ on, velocity: on ? 1 : 0, note: 36 })),
           generation: 6,
         },
         generation: 6,
@@ -125,7 +125,7 @@ describe("StepSequencer", () => {
       data: {
         pattern: {
           trackId: "hat",
-          steps: [{ on: true, velocity: 1 }],
+          steps: [{ on: true, velocity: 1, note: 36 }],
           generation: 6,
         },
         generation: 6,
@@ -133,5 +133,98 @@ describe("StepSequencer", () => {
     });
 
     expect(kickCell(1)).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+/** The pitched lane, which the drum lanes know nothing about. */
+function bassSnapshot(generation: number, notes: number[], root = 0): ServerMessage {
+  const base = snapshot(generation, [false, false, false, false]);
+  if (base.type !== "state.snapshot") throw new Error("wrong type");
+  return {
+    ...base,
+    data: {
+      ...base.data,
+      params: [{ key: "bassRoot", value: root, target: { group: 0 } }],
+      patterns: [
+        ...base.data.patterns,
+        {
+          trackId: "bass",
+          steps: notes.map((note) => ({ on: true, velocity: 1, note })),
+          generation,
+        },
+      ],
+    },
+  };
+}
+
+function bassCell(step: number): HTMLElement {
+  return screen.getByRole("button", { name: new RegExp(`^BASS pas ${step} `) });
+}
+
+describe("StepSequencer — piste BASS", () => {
+  it("announces the note of each cell", () => {
+    receive(bassSnapshot(5, [36, 43]));
+    render(<StepSequencer controller={fakeController()} />);
+
+    expect(bassCell(1)).toHaveAccessibleName(/note C2/);
+    expect(bassCell(2)).toHaveAccessibleName(/note G2/);
+  });
+
+  it("raises a note by a semitone on ArrowUp, an octave with Shift", async () => {
+    const controller = fakeController();
+    receive(bassSnapshot(5, [36, 43]));
+    render(<StepSequencer controller={controller} />);
+
+    bassCell(1).focus();
+    await userEvent.keyboard("{ArrowUp}");
+
+    const [trackId, steps] = controller.setPattern.mock.calls[0]!;
+    expect(trackId).toBe("bass");
+    expect((steps as { note: number }[])[0]!.note).toBe(37);
+    // And the edit shows before any round trip, like a cell toggle does.
+    expect(bassCell(1)).toHaveAccessibleName(/note C#2/);
+
+    await userEvent.keyboard("{Shift>}{ArrowUp}{/Shift}");
+    expect(bassCell(1)).toHaveAccessibleName(/note C#3/);
+  });
+
+  it("keeps the note when a cell is switched off and back on", async () => {
+    const controller = fakeController();
+    receive(bassSnapshot(5, [43]));
+    render(<StepSequencer controller={controller} />);
+
+    await userEvent.click(bassCell(1));
+    await userEvent.click(bassCell(1));
+
+    const [, steps] = controller.setPattern.mock.calls.at(-1)!;
+    expect((steps as { on: boolean; note: number }[])[0]).toMatchObject({ on: true, note: 43 });
+  });
+
+  it("toggles the accent with Shift+Enter", async () => {
+    const controller = fakeController();
+    receive(bassSnapshot(5, [36]));
+    render(<StepSequencer controller={controller} />);
+
+    bassCell(1).focus();
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+
+    const [, steps] = controller.setPattern.mock.calls[0]!;
+    // Down from full: the cell arrived accented, so the first press plains it.
+    expect((steps as { velocity: number }[])[0]!.velocity).toBeLessThan(0.9);
+    expect(bassCell(1)).not.toHaveAccessibleName(/accentué/);
+  });
+
+  it("shows the transposed pitch, as that is what will sound", () => {
+    receive(bassSnapshot(5, [36], 2));
+    render(<StepSequencer controller={fakeController()} />);
+
+    expect(bassCell(1)).toHaveAccessibleName(/note D2/);
+  });
+
+  it("leaves the drum lanes without a note in their label", () => {
+    receive(bassSnapshot(5, [36]));
+    render(<StepSequencer controller={fakeController()} />);
+
+    expect(kickCell(1)).not.toHaveAccessibleName(/note/);
   });
 });

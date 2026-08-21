@@ -278,12 +278,25 @@ export function groupVoiceId(group: number): string {
   return group === 1 ? "pluck" : "pad";
 }
 
-/** Default tracks of the maestro's sequencer, in display order. */
-export const DEFAULT_TRACKS: readonly { trackId: string; sampleId: string; label: string }[] = [
+/**
+ * Default tracks of the maestro's sequencer, in display order.
+ *
+ * `bass` is the odd one out: it has no `SampleSpec` and is absent from
+ * `MAESTRO_VOICES`, because it is synthesised per note rather than loaded (see
+ * `acidBass.ts`). A `pitched` lane reads the note of each cell instead of
+ * playing at one fixed pitch.
+ */
+export const DEFAULT_TRACKS: readonly {
+  trackId: string;
+  sampleId: string;
+  label: string;
+  pitched?: boolean;
+}[] = [
   { trackId: "kick", sampleId: "kick", label: "KICK" },
   { trackId: "snare", sampleId: "snare", label: "SNARE" },
   { trackId: "clap", sampleId: "clap", label: "CLAP" },
   { trackId: "hat", sampleId: "hat", label: "HAT" },
   { trackId: "openhat", sampleId: "openhat", label: "OPEN" },
   { trackId: "rim", sampleId: "rim", label: "RIM" },
+  { trackId: "bass", sampleId: "acid", label: "BASS", pitched: true },
 ];

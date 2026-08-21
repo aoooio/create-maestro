@@ -257,6 +257,7 @@ export class SessionController {
           trackId,
           steps: steps.map((step) => step.on),
           velocity: steps.map((step) => step.velocity),
+          note: steps.map((step) => step.note),
         },
       },
       `pattern.set:${trackId}`,
@@ -433,7 +434,12 @@ export class SessionController {
   private buildVoicing(): Voicing {
     const state = useSessionStore.getState();
     if (this.options.role === "maestro") {
-      return maestroVoicing(state.patterns, DEFAULT_TRACKS);
+      // ROOT transposes the acid line. It reaches the sound through the
+      // voicing rather than the graph, so turning it rebuilds this — which
+      // `applyAllParameters` and the store subscription already do.
+      return maestroVoicing(state.patterns, DEFAULT_TRACKS, {
+        transpose: Number(effectiveParameter(state.params, "bassRoot", 0)),
+      });
     }
     const group = state.groupId || 1;
     return musicianVoicing({
@@ -450,7 +456,21 @@ export class SessionController {
     const state = useSessionStore.getState();
     const maestro = this.options.role === "maestro";
     const group = maestro ? 0 : state.groupId;
-    for (const key of ["resonance", "gain", "reverb", "delay", "mute"] as const) {
+    for (const key of [
+      "resonance",
+      "gain",
+      "reverb",
+      "delay",
+      "mute",
+      // The acid bass sounds on the maestro's own output, but its settings are
+      // read from the same scope as everything else so a musician build that
+      // ever gained the voice would need no new path.
+      "bassCutoff",
+      "bassResonance",
+      "bassEnvMod",
+      "bassDecay",
+      "bassAccent",
+    ] as const) {
       this.engine.setParameter(key, effectiveParameter(state.params, key, group));
     }
 

@@ -310,6 +310,77 @@ func TestPatternIsBroadcastToTheWholeSession(t *testing.T) {
 	}
 }
 
+func TestPitchedPatternCarriesItsNotes(t *testing.T) {
+	srv := newTestServer(t, nil)
+	maestro := srv.dialMaestro(t)
+	maestro.join()
+
+	maestro.send(TypePatternSet, patternSetDTO{
+		TrackID: "bass",
+		Steps:   []bool{true, false, true, true},
+		Note:    []int{36, 36, 43, 39},
+	})
+
+	var pattern patternDTO
+	maestro.expect("pattern.updated").into(t, &pattern)
+	if got := pattern.Note; len(got) != 4 || got[0] != 36 || got[2] != 43 || got[3] != 39 {
+		t.Fatalf("the acid line lost its pitches: %+v", pattern)
+	}
+
+	// And it survives the round trip a reconnection makes: the snapshot is the
+	// only thing a returning console has to go on.
+	maestro.send(TypeStateRequest, struct{}{})
+	var snapshot snapshotDTO
+	maestro.expect("state.snapshot").into(t, &snapshot)
+	found := false
+	for _, p := range snapshot.Patterns {
+		if p.TrackID != "bass" {
+			continue
+		}
+		found = true
+		if len(p.Note) != 4 || p.Note[2] != 43 {
+			t.Fatalf("the snapshot lost the pitches: %+v", p)
+		}
+	}
+	if !found {
+		t.Fatalf("the snapshot has no bass track: %+v", snapshot.Patterns)
+	}
+}
+
+func TestNoteArrayMustMatchTheStepCount(t *testing.T) {
+	srv := newTestServer(t, nil)
+	maestro := srv.dialMaestro(t)
+	maestro.join()
+
+	maestro.send(TypePatternSet, patternSetDTO{
+		TrackID: "bass",
+		Steps:   []bool{true, false, true, true},
+		Note:    []int{36, 43},
+	})
+
+	var failure errorDTO
+	maestro.expect("error").into(t, &failure)
+	if failure.Code != string(session.CodeInvalidPayload) {
+		t.Fatalf("want invalid_payload, got %+v", failure)
+	}
+}
+
+func TestPatternWithoutNotesTakesTheDefaultPitch(t *testing.T) {
+	srv := newTestServer(t, nil)
+	maestro := srv.dialMaestro(t)
+	maestro.join()
+
+	// A percussive track never sends a note array; its cells must still come
+	// back with a sane pitch rather than MIDI 0.
+	maestro.send(TypePatternSet, patternSetDTO{TrackID: "kick", Steps: []bool{true, false}})
+
+	var pattern patternDTO
+	maestro.expect("pattern.updated").into(t, &pattern)
+	if len(pattern.Note) != 2 || pattern.Note[0] != session.DefaultNote {
+		t.Fatalf("want the default pitch on every cell, got %+v", pattern.Note)
+	}
+}
+
 func TestDepartureIsAnnounced(t *testing.T) {
 	srv := newTestServer(t, nil)
 	maestro := srv.dialMaestro(t)
