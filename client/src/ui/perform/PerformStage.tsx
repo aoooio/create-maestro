@@ -12,7 +12,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useCapabilities, useSessionController, useWakeLock } from "@/application/hooks/useSession";
+import { SessionController } from "@/application/session";
+import { useCapabilities, useWakeLock } from "@/application/hooks/useSession";
 import { useAudioStore } from "@/application/store/audioStore";
 import { useSessionStore } from "@/application/store/sessionStore";
 import { groupBadge, groupSkin } from "@/domain/group";
@@ -31,12 +32,43 @@ const MAX_NAME = 24;
 export function PerformStage({ sessionId }: { sessionId: string }) {
   useCapabilities();
   const [name, setName] = useState("");
-  const [joined, setJoined] = useState(false);
+  const [controller, setController] = useState<SessionController | null>(null);
+  const controllerRef = useRef<SessionController | null>(null);
 
-  if (!joined) {
-    return <EntryGate name={name} onName={setName} onJoin={() => setJoined(true)} />;
+  useEffect(() => {
+    return () => {
+      controllerRef.current?.dispose();
+      controllerRef.current = null;
+      useSessionStore.getState().reset();
+      useAudioStore.getState().reset();
+    };
+  }, []);
+
+  async function onJoin() {
+    if (controllerRef.current) return;
+    const trimmed = name.trim().slice(0, MAX_NAME);
+    useSessionStore.getState().reset();
+    const instance = new SessionController({
+      url: performUrl(wsBaseUrl(), sessionId, trimmed),
+      role: "musician",
+      name: trimmed || undefined,
+    });
+    controllerRef.current = instance;
+    instance.connect();
+    setController(instance);
+    // Invoked from the submit handler so AudioContext.resume() still holds
+    // the user activation. A useEffect here would be too late on iOS.
+    try {
+      await instance.startAudio();
+    } catch (error) {
+      useAudioStore.getState().fail(error instanceof Error ? error.message : "audio impossible");
+    }
   }
-  return <Stage sessionId={sessionId} name={name.trim().slice(0, MAX_NAME)} />;
+
+  if (!controller) {
+    return <EntryGate name={name} onName={setName} onJoin={onJoin} />;
+  }
+  return <Stage controller={controller} />;
 }
 
 function EntryGate({
@@ -87,7 +119,6 @@ function EntryGate({
 
           <button
             type="submit"
-            // The gesture that creates and resumes the AudioContext.
             className="glow-strong w-full border border-current px-4 py-5 text-sm tracking-[0.25em] uppercase transition-colors hover:bg-phosphor hover:text-screen-deep"
           >
             ▶ rejoindre l’orchestre
@@ -107,38 +138,25 @@ function EntryGate({
   );
 }
 
-function Stage({ sessionId, name }: { sessionId: string; name: string }) {
-  const controller = useSessionController({
-    url: performUrl(wsBaseUrl(), sessionId, name),
-    role: "musician",
-  });
-
+function Stage({ controller }: { controller: SessionController }) {
   const stage = useAudioStore((state) => state.stage);
   const progress = useAudioStore((state) => state.progress);
   const failure = useAudioStore((state) => state.failure);
+  const needsResume = useAudioStore((state) => state.needsResume);
   const localParam = useAudioStore((state) => state.localParam);
   const groupId = useSessionStore((state) => state.groupId);
   const groupLabel = useSessionStore((state) => state.groupLabel);
-  const started = useRef(false);
 
   useWakeLock(stage === "ready");
 
-  // The gesture already happened (the join button); start as soon as the
-  // controller exists, which is the first moment there is anything to start.
-  useEffect(() => {
-    if (!controller || started.current) return;
-    started.current = true;
-    void controller.startAudio();
-  }, [controller]);
-
-  const onParam = useCallback(
-    (value: number) => controller?.setLocalParam(value),
-    [controller],
-  );
+  const onParam = useCallback((value: number) => controller.setLocalParam(value), [controller]);
   const onTrigger = useCallback(
-    (intensity: number) => controller?.sendTrigger("pad", intensity),
+    (intensity: number) => controller.sendTrigger("pad", intensity),
     [controller],
   );
+  const onResume = useCallback(() => {
+    void controller.resumeAudio();
+  }, [controller]);
 
   const skin = groupSkin(groupId);
 
@@ -153,6 +171,8 @@ function Stage({ sessionId, name }: { sessionId: string; name: string }) {
             <p role="alert" className="text-sm" style={{ color: "var(--color-phosphor-amber)" }}>
               ⚠ {failure}
             </p>
+          ) : needsResume ? (
+            <ResumePrompt onResume={onResume} />
           ) : (
             <>
               <Meter value={progress} />
@@ -189,6 +209,39 @@ function Stage({ sessionId, name }: { sessionId: string; name: string }) {
           <SyncBadge compact />
         </footer>
       </div>
+
+      {needsResume ? <ResumeOverlay onResume={onResume} /> : null}
     </CrtScreen>
+  );
+}
+
+function ResumePrompt({ onResume }: { onResume: () => void }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm leading-6 text-dim">
+        Le navigateur a bloqué le son. Un tap est nécessaire pour l’ouvrir.
+      </p>
+      <button
+        type="button"
+        onClick={onResume}
+        className="glow-strong w-full border border-current px-4 py-5 text-sm tracking-[0.25em] uppercase transition-colors hover:bg-phosphor hover:text-screen-deep"
+      >
+        ▶ activer le son
+      </button>
+    </div>
+  );
+}
+
+function ResumeOverlay({ onResume }: { onResume: () => void }) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-screen/85 px-6">
+      <button
+        type="button"
+        onClick={onResume}
+        className="glow-strong w-full max-w-md border border-current px-4 py-8 text-sm tracking-[0.25em] uppercase"
+      >
+        ▶ touchez pour rétablir le son
+      </button>
+    </div>
   );
 }
