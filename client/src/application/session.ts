@@ -22,6 +22,11 @@ import {
 import { AudioEngine } from "@/infrastructure/audio/engine";
 import { loadSamples, type SampleBank } from "@/infrastructure/audio/sampleLoader";
 import {
+  restartPlaybackKeepAlive,
+  startPlaybackKeepAlive,
+  stopPlaybackKeepAlive,
+} from "@/infrastructure/audio/unlock";
+import {
   DEFAULT_TRACKS,
   MAESTRO_VOICES,
   MUSICIAN_VOICES,
@@ -59,6 +64,8 @@ export class SessionController {
   private engine: AudioEngine | null = null;
   private scheduler: LookaheadScheduler | null = null;
   private context: AudioContext | null = null;
+  private keepAlive: HTMLAudioElement | null = null;
+  private graphReady = false;
   private unsubscribe: (() => void) | null = null;
   private faded = false;
   private restoreTimer: ReturnType<typeof setTimeout> | null = null;
@@ -137,6 +144,10 @@ export class SessionController {
    * create the context inside the handler, resume it, then load. Audio is not
    * allowed to start before the clock burst has settled (§5.1) — a phone that
    * starts early is a phone that starts wrong.
+   *
+   * The AudioContext, `resume()`, and the silent keep-alive must all be
+   * *invoked* before the first `await`. Yielding first spends iOS's user
+   * activation and leaves the context suspended.
    */
   async startAudio(): Promise<void> {
     const audio = useAudioStore.getState();
@@ -152,14 +163,14 @@ export class SessionController {
 
     const context = new Ctor();
     this.context = context;
-    await context.resume();
+    this.keepAlive = startPlaybackKeepAlive();
+    const resumed = context.resume();
+    this.bindInterruption(context);
+    await resumed;
 
-    // iOS suspends the context on an incoming call and never resumes it on its
-    // own; the anchor is also stale after the gap, so both are handled here.
-    context.addEventListener("statechange", () => {
-      if (context.state === "suspended") void context.resume();
-      if (context.state === "running") this.audioClock?.refresh();
-    });
+    if (context.state !== "running") {
+      audio.setNeedsResume(true);
+    }
 
     audio.setStage("loading");
     let bank: SampleBank;
@@ -197,7 +208,20 @@ export class SessionController {
     // planned, or the first bar lands wherever this phone happens to think it is.
     await this.waitForClock();
     this.scheduler.start();
-    audio.setStage("ready");
+    this.graphReady = true;
+    this.markRunningOrBlocked();
+  }
+
+  /** Must be called from a tap: iOS will not resume a context any other way. */
+  async resumeAudio(): Promise<void> {
+    const context = this.context;
+    if (!context || context.state === "closed") return;
+    restartPlaybackKeepAlive(this.keepAlive);
+    await context.resume();
+    if (context.state === "running") {
+      this.audioClock?.refresh();
+      this.markRunningOrBlocked();
+    }
   }
 
   // --- maestro commands ---
@@ -258,23 +282,64 @@ export class SessionController {
   sendTrigger(kind: string, intensity: number): void {
     const clamped = Math.min(1, Math.max(0, intensity));
     const group = useSessionStore.getState().groupId;
+    void this.resumeAudio();
     this.engine?.fire(triggerNote(group, clamped));
     this.ws.send({ t: "trigger", d: { kind, intensity: clamped } });
   }
 
   dispose(): void {
     if (this.restoreTimer !== null) clearTimeout(this.restoreTimer);
+    document.removeEventListener("visibilitychange", this.onVisibility);
     this.unsubscribe?.();
     this.scheduler?.stop();
     this.audioClock?.stop();
     this.clock.stop();
     this.ws.close();
     this.engine?.dispose();
+    stopPlaybackKeepAlive(this.keepAlive);
+    this.keepAlive = null;
     void this.context?.close();
     this.context = null;
+    this.graphReady = false;
   }
 
   // --- internals ---
+
+  private bindInterruption(context: AudioContext): void {
+    // iOS suspends on an incoming call and never resumes on its own. A
+    // `resume()` here without a gesture fails on WebKit; desktop still
+    // recovers. The overlay is what actually brings a phone back.
+    context.addEventListener("statechange", () => {
+      if (context.state === "running") {
+        this.audioClock?.refresh();
+        this.markRunningOrBlocked();
+        return;
+      }
+      if (context.state === "closed") return;
+      useAudioStore.getState().setNeedsResume(true);
+      void context.resume();
+    });
+    document.addEventListener("visibilitychange", this.onVisibility);
+  }
+
+  private readonly onVisibility = (): void => {
+    if (document.visibilityState !== "visible") return;
+    const context = this.context;
+    if (!context || context.state === "closed" || context.state === "running") return;
+    useAudioStore.getState().setNeedsResume(true);
+  };
+
+  private markRunningOrBlocked(): void {
+    const context = this.context;
+    const audio = useAudioStore.getState();
+    if (!context || context.state === "closed") return;
+    if (context.state === "running") {
+      audio.setNeedsResume(false);
+      if (this.graphReady && audio.stage !== "failed") audio.setStage("ready");
+      return;
+    }
+    audio.setNeedsResume(true);
+  }
 
   private voiceSpecs(): readonly SampleSpec[] {
     return this.options.role === "maestro" ? MAESTRO_VOICES : MUSICIAN_VOICES;

@@ -30,6 +30,8 @@ export interface AudioState {
   localParam: number;
   /** Fades the master bus out after a long disconnection (§6.5). */
   offline: boolean;
+  /** The AudioContext is not running — iOS needs another tap to resume. */
+  needsResume: boolean;
 
   setStage: (stage: EngineStage) => void;
   setProgress: (progress: number) => void;
@@ -38,6 +40,7 @@ export interface AudioState {
   setSync: (sync: { quality: SyncQuality; offsetMs: number; rttMs: number; samples: number }) => void;
   setLocalParam: (value: number) => void;
   setOffline: (offline: boolean) => void;
+  setNeedsResume: (needsResume: boolean) => void;
   reset: () => void;
 }
 
@@ -54,6 +57,7 @@ function initialState() {
     samples: 0,
     localParam: 0.5,
     offline: false,
+    needsResume: false,
   };
 }
 
@@ -68,5 +72,6 @@ export const useAudioStore = create<AudioState>((set) => ({
     set({ syncQuality: quality, offsetMs, rttMs, samples }),
   setLocalParam: (localParam) => set({ localParam }),
   setOffline: (offline) => set({ offline }),
+  setNeedsResume: (needsResume) => set({ needsResume }),
   reset: () => set(initialState()),
 }));
