@@ -14,20 +14,15 @@ function lanHosts(): string[] {
 const config: NextConfig = {
   reactStrictMode: true,
   // Phones on the same Wi-Fi hit the dev server by LAN IP; Next blocks that
-  // origin unless it is listed here.
-  allowedDevOrigins: lanHosts(),
+  // origin unless it is listed here. Detected rather than written down: the
+  // address changes with the venue, and a hard-coded one only works in the
+  // room it was written in.
+  allowedDevOrigins: [...lanHosts(), "localhost", "127.0.0.1"],
   // The scheduler worker is bundled by Next through `new Worker(new URL(...))`,
   // which needs no extra configuration; nothing else here is optional.
   experimental: {
     typedRoutes: true,
   },
-  allowedDevOrigins: [
-    "192.168.1.108",
-    "10.x.*.*",
-    "172.x.x.x",
-    "127.0.0.1",
-    "localhost",
-  ],
 };
 
 export default config;
