@@ -21,6 +21,17 @@ describe("parameter registry", () => {
     expect(defaultValue(PARAMETER_REGISTRY.mute)).toBe(false);
   });
 
+  it("mirrors the bounds of the group synth keys", () => {
+    // A waveform is an index and an octave is signed: both would survive a
+    // registry that quietly assumed 0..1, and neither would sound right.
+    expect(PARAMETER_REGISTRY.synthWave.max).toBe(3);
+    expect(PARAMETER_REGISTRY.synthOctave.min).toBe(-2);
+    expect(clampParameter(PARAMETER_REGISTRY.synthOctave, -1)).toBe(-1);
+    expect(clampParameter(PARAMETER_REGISTRY.synthOctave, -9)).toBe(-2);
+    expect(clampParameter(PARAMETER_REGISTRY.synthWave, 9)).toBe(3);
+    expect(defaultValue(PARAMETER_REGISTRY.synthRelease)).toBe(0.35);
+  });
+
   it("rejects a key the server does not know", () => {
     expect(lookupParameter("cutoff")).toBeDefined();
     expect(lookupParameter("wobble")).toBeUndefined();

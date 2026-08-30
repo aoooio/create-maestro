@@ -21,6 +21,17 @@ const (
 	ParamBassDecay     ParameterKey = "bassDecay"
 	ParamBassAccent    ParameterKey = "bassAccent"
 	ParamBassRoot      ParameterKey = "bassRoot"
+
+	// The layer a group plays is synthesised note by note on every phone of
+	// that group, so its timbre is a set of values rather than a file. These
+	// are the maestro's handles on it, and like every other key they are
+	// scoped to a target — one group at a time.
+	ParamSynthWave       ParameterKey = "synthWave"
+	ParamSynthSpread     ParameterKey = "synthSpread"
+	ParamSynthAttack     ParameterKey = "synthAttack"
+	ParamSynthRelease    ParameterKey = "synthRelease"
+	ParamSynthBrightness ParameterKey = "synthBrightness"
+	ParamSynthOctave     ParameterKey = "synthOctave"
 )
 
 // ParameterKind decides how a value is clamped and how it reaches the wire.
@@ -58,6 +69,15 @@ var parameterRegistry = map[ParameterKey]ParameterSpec{
 	// A transposition in semitones rather than a 0..1 dial: the bounds of a
 	// spec are per key, so the registry can carry it as it is.
 	ParamBassRoot: {Key: ParamBassRoot, Kind: KindContinuous, Min: 0, Max: 11, Default: 0},
+
+	// A waveform is an enumeration and an octave is signed: the registry holds
+	// bounds per key, so neither has to be squeezed into a 0..1 dial.
+	ParamSynthWave:       {Key: ParamSynthWave, Kind: KindContinuous, Min: 0, Max: 3, Default: 0},
+	ParamSynthSpread:     {Key: ParamSynthSpread, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.4},
+	ParamSynthAttack:     {Key: ParamSynthAttack, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.05},
+	ParamSynthRelease:    {Key: ParamSynthRelease, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.35},
+	ParamSynthBrightness: {Key: ParamSynthBrightness, Kind: KindContinuous, Min: 0, Max: 1, Default: 0.5},
+	ParamSynthOctave:     {Key: ParamSynthOctave, Kind: KindContinuous, Min: -2, Max: 2, Default: 0},
 }
 
 // LookupParameter returns the spec of a key, or an error for unknown keys —

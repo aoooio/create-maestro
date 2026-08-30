@@ -5,7 +5,7 @@ import { newPattern } from "@/domain/pattern";
 import { stepsBetween } from "@/domain/transport";
 import type { StepEvent, Transport } from "@/domain/types";
 
-import { maestroVoicing, musicianVoicing, triggerNote } from "./voicing";
+import { combineVoicings, maestroVoicing, musicianVoicing, triggerNote } from "./voicing";
 
 const transport: Transport = {
   state: "playing",
@@ -24,8 +24,8 @@ describe("musician layer", () => {
   it("is identical on two phones of the same group", () => {
     // The point of deriving the melody rather than sending it: no message can
     // arrive late, because no message is sent at all.
-    const phoneA = musicianVoicing({ group: 1, density: 0.6, sampleId: "pluck" });
-    const phoneB = musicianVoicing({ group: 1, density: 0.6, sampleId: "pluck" });
+    const phoneA = musicianVoicing({ group: 1, density: 0.6 });
+    const phoneB = musicianVoicing({ group: 1, density: 0.6 });
 
     for (const event of bars(4)) {
       expect(phoneA(event)).toEqual(phoneB(event));
@@ -33,8 +33,8 @@ describe("musician layer", () => {
   });
 
   it("gives the two registers different lines", () => {
-    const high = musicianVoicing({ group: 1, density: 1, sampleId: "pluck" });
-    const mid = musicianVoicing({ group: 2, density: 1, sampleId: "pad" });
+    const high = musicianVoicing({ group: 1, density: 1 });
+    const mid = musicianVoicing({ group: 2, density: 1 });
 
     const highNotes = bars().flatMap((event) => high(event).map((note) => note.freq!));
     const midNotes = bars().flatMap((event) => mid(event).map((note) => note.freq!));
@@ -48,7 +48,7 @@ describe("musician layer", () => {
 
   it("thickens from the strong beats outwards as density rises", () => {
     const count = (density: number) =>
-      bars().filter((event) => musicianVoicing({ group: 1, density, sampleId: "pluck" })(event).length > 0)
+      bars().filter((event) => musicianVoicing({ group: 1, density })(event).length > 0)
         .length;
 
     expect(count(0)).toBe(0);
@@ -58,7 +58,7 @@ describe("musician layer", () => {
   });
 
   it("puts the first note of every bar on the downbeat", () => {
-    const voicing = musicianVoicing({ group: 1, density: 0.3, sampleId: "pluck" });
+    const voicing = musicianVoicing({ group: 1, density: 0.3 });
     const downbeats = bars(4).filter((event) => event.stepInBar === 0);
     for (const event of downbeats) {
       expect(voicing(event)).toHaveLength(1);
@@ -66,7 +66,7 @@ describe("musician layer", () => {
   });
 
   it("stays inside the scale, whatever the step", () => {
-    const voicing = musicianVoicing({ group: 1, density: 1, sampleId: "pluck" });
+    const voicing = musicianVoicing({ group: 1, density: 1 });
     const semitones = new Set(
       bars(8)
         .flatMap((event) => voicing(event))
@@ -77,6 +77,132 @@ describe("musician layer", () => {
     for (const semitone of semitones) {
       expect(allowed.has(((semitone % 12) + 12) % 12)).toBe(true);
     }
+  });
+});
+
+describe("written note strip", () => {
+  /** A strip of `length` steps, with a note at each given index. */
+  const strip = (length: number, notes: Record<number, number>, velocity = 1) =>
+    newPattern(
+      "group1",
+      Array.from({ length }, (_, index) => ({
+        on: index in notes,
+        velocity: index in notes ? velocity : 0,
+        note: notes[index] ?? 36,
+      })),
+    );
+
+  const at = (index: number): StepEvent => ({
+    serverMs: 0,
+    index,
+    stepInBar: index % 16,
+    bar: Math.floor(index / 16),
+    beat: index / 4,
+    secondsPerStep: 0.125,
+  });
+
+  it("plays the written note instead of the derived figure", () => {
+    const written = musicianVoicing({ group: 1, density: 1, strip: strip(16, { 0: 60 }) });
+    const derived = musicianVoicing({ group: 1, density: 1 });
+
+    expect(written(at(0))).toHaveLength(1);
+    expect(written(at(0))[0]!.freq!).toBeCloseTo(midiToFreq(60), 6);
+    expect(written(at(0))[0]!.freq).not.toBeCloseTo(derived(at(0))[0]!.freq!, 6);
+    // And a step the maestro left empty is silent, however high the density.
+    expect(written(at(1))).toEqual([]);
+    expect(derived(at(1)).length).toBeGreaterThan(0);
+  });
+
+  it("falls back to the derived figure when nothing is written", () => {
+    const derived = musicianVoicing({ group: 1, density: 1 });
+    // An absent strip and an empty one mean the same thing: nobody has
+    // written here yet, so a console left alone still sounds like music.
+    for (const options of [
+      { group: 1, density: 1 },
+      { group: 1, density: 1, strip: strip(16, {}) },
+    ]) {
+      const voicing = musicianVoicing(options);
+      for (const event of bars(2)) expect(voicing(event)).toEqual(derived(event));
+    }
+  });
+
+  it("is identical on two phones of the same group", () => {
+    // The strip replaces "we all computed the same thing" with "we all read
+    // the same grid" — the guarantee has to survive the change.
+    const written = strip(32, { 0: 60, 9: 63, 20: 67, 31: 65 });
+    const phoneA = musicianVoicing({ group: 1, density: 0.6, strip: written });
+    const phoneB = musicianVoicing({ group: 1, density: 0.9, strip: written });
+
+    for (const event of bars(4)) {
+      // Note the differing density: it governs the derived figure only, so
+      // two phones reading one strip agree regardless of it.
+      expect(phoneA(event)).toEqual(phoneB(event));
+    }
+  });
+
+  it("loops a two-bar strip over two bars, not one", () => {
+    const voicing = musicianVoicing({ group: 1, density: 1, strip: strip(32, { 20: 60 }) });
+    expect(voicing(at(20))).toHaveLength(1);
+    expect(voicing(at(4))).toEqual([]);
+    expect(voicing(at(52))).toHaveLength(1); // 20 + 32
+  });
+
+  it("transposes a strip by the root, like the bass line", () => {
+    const written = strip(16, { 0: 60 });
+    const plain = musicianVoicing({ group: 1, density: 1, strip: written });
+    const inD = musicianVoicing({ group: 1, density: 1, strip: written, transpose: 2 });
+    expect(inD(at(0))[0]!.freq! / plain(at(0))[0]!.freq!).toBeCloseTo(2 ** (2 / 12), 6);
+  });
+
+  it("reads the accent off the velocity, and holds one step", () => {
+    const loud = musicianVoicing({ group: 1, density: 1, strip: strip(16, { 0: 60 }, 1) });
+    const soft = musicianVoicing({ group: 1, density: 1, strip: strip(16, { 0: 60 }, 0.6) });
+    expect(loud(at(0))[0]!.accent).toBe(true);
+    expect(soft(at(0))[0]!.accent).toBe(false);
+    expect(loud(at(0))[0]!.durationSec).toBe(0.125);
+  });
+
+  it("renders both paths through the synth voice, on the group's own track", () => {
+    // Otherwise the synth panel would be inert until a strip was written.
+    for (const voicing of [
+      musicianVoicing({ group: 2, density: 1 }),
+      musicianVoicing({ group: 2, density: 1, strip: strip(16, { 0: 60 }) }),
+    ]) {
+      const [note] = voicing(at(0));
+      expect(note!.voice).toBe("synth");
+      expect(note!.group).toBe(2);
+      expect(note!.trackId).toBe("group2");
+      expect(note!.sampleId).toBeUndefined();
+    }
+  });
+});
+
+describe("combineVoicings", () => {
+  const at = (index: number): StepEvent => ({
+    serverMs: 0,
+    index,
+    stepInBar: index % 16,
+    bar: 0,
+    beat: index / 4,
+    secondsPerStep: 0.125,
+  });
+
+  it("hands back one layer untouched", () => {
+    const one = musicianVoicing({ group: 1, density: 1 });
+    expect(combineVoicings(one)).toBe(one);
+  });
+
+  it("plays every layer of a monitored console at once", () => {
+    const combined = combineVoicings(
+      musicianVoicing({ group: 1, density: 1 }),
+      musicianVoicing({ group: 2, density: 1 }),
+    );
+    const tracks = combined(at(0)).map((note) => note.trackId);
+    expect(tracks).toEqual(["group1", "group2"]);
+  });
+
+  it("says nothing when no layer does", () => {
+    expect(combineVoicings(() => [], () => [])(at(0))).toEqual([]);
   });
 });
 

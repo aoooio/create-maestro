@@ -7,6 +7,7 @@
 
 import { create } from "zustand";
 
+import type { GroupId } from "@/domain/types";
 import type { SyncQuality } from "@/infrastructure/clock/clockSync";
 
 export type EngineStage = "idle" | "unlocking" | "loading" | "ready" | "failed";
@@ -32,6 +33,12 @@ export interface AudioState {
   offline: boolean;
   /** The AudioContext is not running — iOS needs another tap to resume. */
   needsResume: boolean;
+  /**
+   * Group layers the maestro is auditioning on this console. Strictly local,
+   * like `localParam`: monitoring is how the maestro hears what they are
+   * writing, and it must not change one note of what the room plays.
+   */
+  monitorGroups: ReadonlySet<GroupId>;
 
   setStage: (stage: EngineStage) => void;
   setProgress: (progress: number) => void;
@@ -41,6 +48,7 @@ export interface AudioState {
   setLocalParam: (value: number) => void;
   setOffline: (offline: boolean) => void;
   setNeedsResume: (needsResume: boolean) => void;
+  toggleMonitor: (group: GroupId) => void;
   reset: () => void;
 }
 
@@ -58,6 +66,7 @@ function initialState() {
     localParam: 0.5,
     offline: false,
     needsResume: false,
+    monitorGroups: new Set<GroupId>() as ReadonlySet<GroupId>,
   };
 }
 
@@ -73,5 +82,13 @@ export const useAudioStore = create<AudioState>((set) => ({
   setLocalParam: (localParam) => set({ localParam }),
   setOffline: (offline) => set({ offline }),
   setNeedsResume: (needsResume) => set({ needsResume }),
+  toggleMonitor: (group) =>
+    set((state) => {
+      // A new Set every time: subscribers compare by identity, and a mutated
+      // one would leave the console's MONITOR button showing the old state.
+      const next = new Set(state.monitorGroups);
+      if (!next.delete(group)) next.add(group);
+      return { monitorGroups: next };
+    }),
   reset: () => set(initialState()),
 }));

@@ -24,6 +24,8 @@ import { OfflineBanner, SyncBadge } from "@/ui/shared/SyncBadge";
 
 import { AcidBassPanel } from "./AcidBassPanel";
 import { GroupMixer } from "./GroupMixer";
+import { GroupSynthPanel } from "./GroupSynthPanel";
+import { NoteStripSequencer } from "./NoteStripSequencer";
 import { ParticipantWall, useTriggerSink } from "./ParticipantWall";
 import { StepSequencer } from "./StepSequencer";
 import { TempoDial } from "./TempoDial";
@@ -95,6 +97,8 @@ export function MaestroConsole({
         <TempoDial controller={controller} />
         <StepSequencer controller={controller} />
         <AcidBassPanel controller={controller} />
+        <NoteStripSequencer controller={controller} />
+        <GroupSynthPanel controller={controller} />
 
         <div className="grid gap-3 lg:grid-cols-2">
           <GroupMixer controller={controller} />

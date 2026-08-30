@@ -12,7 +12,7 @@
  * dropped the moment the server echoes the pattern back with a new generation.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 
 import type { SessionController } from "@/application/session";
 import { useTransportPosition } from "@/application/hooks/useTransportPosition";
@@ -25,16 +25,8 @@ import type { Step } from "@/domain/types";
 import { DEFAULT_TRACKS } from "@/infrastructure/audio/voices";
 import { Panel } from "@/ui/shared/Panel";
 
-/** Geometry of one step cell, in rem. `w-6` wide, `gap-2` apart — the playhead
- * has to agree with the grid, so both read these. */
-const CELL_WIDTH_REM = 1.5;
-const CELL_PITCH_REM = 2;
-
-/** A cell flipped locally, and the generation it was flipped against. */
-interface Draft {
-  steps: Step[];
-  basedOnGeneration: number;
-}
+import { CELL_WIDTH_REM, playheadOpacity, playheadTransform } from "./grid";
+import { usePatternDraft } from "./usePatternDraft";
 
 /** What a screen reader is told about one cell. A pitched lane has two more
  * things to say about it than a drum lane does. */
@@ -69,7 +61,7 @@ export function StepSequencer({ controller }: { controller: SessionController | 
 
   const playheadRef = useRef<HTMLDivElement>(null);
   const positionRef = useRef<HTMLSpanElement>(null);
-  const [drafts, setDrafts] = useState<Map<string, Draft>>(new Map());
+  const draft = usePatternDraft();
 
   useTransportPosition(
     controller,
@@ -79,9 +71,8 @@ export function StepSequencer({ controller }: { controller: SessionController | 
         // Moved by the real cell pitch (a 1.5rem cell plus a 0.5rem gap), not
         // by a percentage of the container: the row is wider than its cells,
         // so a percentage walks the playhead off the end of the grid.
-        head.style.transform = `translateX(calc(${frame.stepInBar} * ${CELL_PITCH_REM}rem))`;
-        // The trace fades across the step, the way a phosphor column would.
-        head.style.opacity = frame.playing ? String(0.35 + 0.5 * (1 - frame.beatPhase)) : "0.12";
+        head.style.transform = playheadTransform(frame.stepInBar);
+        head.style.opacity = playheadOpacity(frame.playing, frame.beatPhase);
       }
       const readout = positionRef.current;
       if (readout) {
@@ -93,17 +84,11 @@ export function StepSequencer({ controller }: { controller: SessionController | 
   const grids = useMemo(() => {
     const result = new Map<string, Step[]>();
     for (const track of DEFAULT_TRACKS) {
-      const pattern = patterns.get(track.trackId);
-      const draft = drafts.get(track.trackId);
-      // A draft only survives until the server echoes the track back with a
-      // newer generation — at which point the server's word replaces it, with
-      // no reconciliation to get wrong (§4.4).
-      const live = draft && (pattern?.generation ?? 0) <= draft.basedOnGeneration;
-      const steps = live ? draft.steps : (pattern?.steps ?? null);
+      const steps = draft.resolve(track.trackId, patterns.get(track.trackId));
       result.set(track.trackId, steps ? resizeGrid(steps, stepCount) : emptyGrid(stepCount));
     }
     return result;
-  }, [patterns, drafts, stepCount]);
+  }, [patterns, draft, stepCount]);
 
   /**
    * The single write path: every edit — on/off, pitch, accent — goes through
@@ -114,18 +99,7 @@ export function StepSequencer({ controller }: { controller: SessionController | 
     const grid = grids.get(trackId);
     if (!grid || !controller) return;
     const next = grid.map((step, i) => (i === index ? change(step) : step));
-    setDrafts((current) => {
-      const pruned = new Map<string, Draft>();
-      // Drop the drafts the server has already answered, so the map does not
-      // grow for the length of a set.
-      for (const [id, draft] of current) {
-        if ((patterns.get(id)?.generation ?? 0) <= draft.basedOnGeneration) pruned.set(id, draft);
-      }
-      return pruned.set(trackId, {
-        steps: next,
-        basedOnGeneration: patterns.get(trackId)?.generation ?? 0,
-      });
-    });
+    draft.commit(trackId, next);
     controller.setPattern(trackId, next);
   }
 

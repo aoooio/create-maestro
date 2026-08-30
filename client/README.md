@@ -91,26 +91,74 @@ limiteur → sortie`, analyser en dérivation. Tout paramètre passe par
 `setTargetAtTime` — une affectation directe fait un clic, et cent téléphones qui
 cliquent ensemble font une détonation.
 
-Les voix sont **rendues**, pas téléchargées : chaque son est une recette jouée
-une fois dans un `OfflineAudioContext`, derrière la même interface que
+Les percussions sont **rendues**, pas téléchargées : chaque son est une recette
+jouée une fois dans un `OfflineAudioContext`, derrière la même interface que
 `fetch` + `decodeAudioData`. Une spec portant une `url` prend d'ailleurs cette
 route-là, donc passer à de vrais fichiers est un changement de manifeste
 (`voices.ts`), pas de moteur.
 
-**La mélodie du musicien est dérivée, pas transmise.** `pattern.set` est
-maestro-only (§9.2) : elle ne peut pas descendre par le fil, et doit pourtant
-être identique sur tous les téléphones d'un groupe. Elle est donc calculée à
-partir d'une table fixe et de la position partagée (`src/application/voicing.ts`).
-Deux téléphones du GROUPE 1 jouent la même note parce qu'ils lisent la même
-horloge — ce qui fait de « ces deux clients sont-ils d'accord ? » un test
-unitaire au lieu d'une répétition.
+**Les voix jouées, elles, sont synthétisées note par note** — la basse acide
+(`acidBass.ts`) et la couche de chaque groupe (`groupSynth.ts`). Un buffer ne
+convient pas à ce qui doit rester réglable : la forme d'onde, le filtre et
+l'enveloppe y sont cuits avant que le maestro n'ouvre la console, et
+`playbackRate` transposerait l'enveloppe en même temps que la hauteur — une
+note aiguë obtiendrait un balayage court et brillant, une grave un long et
+terne, exactement à l'envers. Dès lors que le maestro peut tourner un bouton et
+entendre la salle changer, la note doit être construite à l'instant où elle est
+jouée.
+
+**Ce que joue un groupe : une bande écrite, sinon une figure dérivée.**
+`src/application/voicing.ts` a deux chemins, et l'ordre entre eux est tout le
+propos.
+
+Quand le maestro a écrit une bande, elle gagne. Elle descend par `pattern.set`
+sur la piste `group1` ou `group2` — le message est maestro-only (§9.2) mais
+diffusé à toute la session — et chaque téléphone du groupe joue les notes de
+cette grille, au pas que l'horloge partagée lui donne. Le déterminisme ne vient
+plus de ce que tout le monde calcule la même chose, mais de ce que tout le monde
+lit la même chose.
+
+Sans bande, la dérivation d'origine reprend la main : une table fixe, la
+position partagée, et le `density` du groupe. Deux téléphones du GROUPE 1 jouent
+la même note parce qu'ils lisent la même horloge. Ce repli n'est pas un vestige
+— c'est ce qui fait qu'une session dont personne n'a touché le second séquenceur
+sonne quand même comme de la musique.
+
+Les deux chemins sont déterministes de la même façon, ce qui fait de « ces deux
+clients sont-ils d'accord ? » un test unitaire au lieu d'une répétition. Une
+bande peut faire une, deux ou quatre mesures : elle est lue sur l'index de pas
+**absolu** (`stepAtIndex`), et non sur la position dans la mesure, sans quoi une
+bande de deux mesures rejouerait sa première moitié à chaque mesure.
 
 ## Interface
 
-**Console maestro** (`/maestro/[sessionId]`) — séquenceur 16 pas, tempo,
-mixage par groupe, mur des participants, ligne de santé. La tête de lecture se
-déplace à 60 fps **sans aucun rendu React** : un seul élément déplacé par
-`transform` depuis la boucle d'animation. Raccourcis : espace, ← →, 1/2.
+**Console maestro** (`/maestro/[sessionId]`) — séquenceur 16 pas, basse acide,
+bandes de notes et synthés par groupe, tempo, mixage, mur des participants,
+ligne de santé. Toutes les têtes de lecture se déplacent à 60 fps **sans aucun
+rendu React** : un seul élément déplacé par `transform` depuis la boucle
+d'animation, sur une géométrie que les deux séquenceurs lisent au même endroit
+(`ui/maestro/grid.ts`). Raccourcis : espace, ← →, 1/2.
+
+**Le second séquenceur** (`NoteStripSequencer`) est le jumeau du premier, tourné
+sur le flanc : là où une piste de batterie demande *quand*, une bande doit dire
+*quand et quelle note*, et la grille est la réponse — les lignes sont des
+hauteurs, donc une mélodie est une forme et non une colonne de nombres à lire un
+par un. Clic pour poser une note, glisser verticalement pour la hauteur,
+Maj+clic (ou Maj+Entrée) pour l'accent, 16/32/64 pour la longueur de boucle.
+
+Les lignes sont une penta mineure (`domain/scale.ts`), pas un piano-roll
+chromatique. C'est une perte de liberté délibérée : le maestro écrit, sur une
+scène sombre, une ligne que cinquante téléphones vont jouer ensemble, et il n'y
+a aucun moyen de s'arrêter pour corriger un intervalle. Une grille incapable
+d'en exprimer un faux vaut mieux, ici, qu'une grille capable de tout exprimer.
+Une bande est monophonique pour la même raison : un geste, une note, une forme
+lisible d'un coup d'œil.
+
+**MONITOR** fait entendre la couche d'un groupe sur la console. C'est un gain
+local sur une piste du moteur, jamais un message : la console fait tourner la
+fonction de voicing *que les téléphones exécutent* (`combineVoicings`), elle ne
+la réimplémente pas — donc ce que le maestro s'écoute écrire est ce que la salle
+joue.
 
 Le jeton maestro arrive dans le fragment du lien (`#token=…`) — un fragment
 n'atteint jamais un serveur, ce qui en fait le bon endroit pour un secret dans
@@ -156,13 +204,16 @@ Go correspondants pour que les deux domaines ne divergent pas en silence.
 `clockSync` est exercé contre un réseau simulé — jitter, perte, saut d'horloge —
 sans serveur et sans DOM. Le reste : backoff et coalescence du client WS,
 idempotence du store sur `generation`, découpage de fenêtre du séquenceur,
-accord entre deux musiciens d'un même groupe, et quelques composants en Testing
-Library.
+accord entre deux musiciens d'un même groupe — sur les **deux** chemins, bande
+écrite et figure dérivée, parce que c'est la propriété dont dépend tout le
+reste — repli d'une bande vide sur la figure, boucle d'une bande de deux mesures
+sur deux mesures, et quelques composants en Testing Library.
 
 ## Ce qui n'est pas encore là
 
 - Lot 5 : métriques et test de charge 200 clients, comme côté serveur.
 - Réaffectation de groupe à chaud : le domaine Go sait le faire, aucun message
   du protocole ne l'expose (§9.4).
-- Une seule piste de samples par groupe. La palette est dans le bundle ; servir
-  des sons par groupe est l'arbitrage §9.3, laissé ouvert.
+- Une seule bande par groupe, et une bande monophonique. Deux voix simultanées
+  dans un même registre demanderaient une pattern par ligne, donc un `trackId`
+  par ligne — le protocole le porterait, l'écran beaucoup moins.

@@ -61,3 +61,29 @@ export function stepAt(pattern: Pattern, stepInBar: number): Step | undefined {
   if (pattern.steps.length === 0) return undefined;
   return pattern.steps[stepInBar % pattern.steps.length];
 }
+
+/**
+ * The step a pattern plays at an *absolute* step index — the scheduler's
+ * cursor, counted from beat 0 rather than from the top of the bar.
+ *
+ * This is what a grid longer than one bar has to be read with. `stepAt` folds
+ * on `stepInBar`, so a 32-step strip read through it would replay its first
+ * sixteen cells every bar and the second half would never sound. Since the
+ * absolute index is `bar × stepsPerBar + stepInBar`, wrapping on it instead
+ * gives a loop that spans as many bars as the grid is long, and lands on a bar
+ * line whenever the grid is a whole number of bars.
+ *
+ * A negative index is folded the right way round: `%` alone would return a
+ * negative remainder and index off the front of the array.
+ */
+export function stepAtIndex(pattern: Pattern, index: number): Step | undefined {
+  const length = pattern.steps.length;
+  if (length === 0) return undefined;
+  return pattern.steps[((index % length) + length) % length];
+}
+
+/** Whether a grid would make any sound at all. An empty strip is how a group
+ * says "nothing written here", which is a different thing from silence. */
+export function hasActiveStep(pattern: Pattern | undefined): boolean {
+  return pattern !== undefined && pattern.steps.some((step) => step.on);
+}
