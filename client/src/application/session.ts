@@ -10,7 +10,8 @@
 
 import { effectiveParameter, type ParameterKey } from "@/domain/parameter";
 import { clampBpm, nextBarBoundary, transportAt } from "@/domain/transport";
-import type { ParameterTarget, Role, Step } from "@/domain/types";
+import { groupTrackId } from "@/domain/scale";
+import type { GroupId, ParameterTarget, Role, Step } from "@/domain/types";
 import { formatTarget } from "@/domain/group";
 import { AudioClock } from "@/infrastructure/clock/audioClock";
 import { ClockSync } from "@/infrastructure/clock/clockSync";
@@ -26,11 +27,11 @@ import {
   startPlaybackKeepAlive,
   stopPlaybackKeepAlive,
 } from "@/infrastructure/audio/unlock";
+import type { GroupSynthSettings } from "@/infrastructure/audio/groupSynth";
 import {
   DEFAULT_TRACKS,
   MAESTRO_VOICES,
   MUSICIAN_VOICES,
-  groupVoiceId,
   type SampleSpec,
 } from "@/infrastructure/audio/voices";
 import { CLIENT_VERSION } from "@/infrastructure/config";
@@ -39,12 +40,25 @@ import type { ServerMessage, TriggerRelay } from "@/infrastructure/ws/codec";
 
 import { useAudioStore } from "./store/audioStore";
 import { useSessionStore } from "./store/sessionStore";
-import { maestroVoicing, musicianVoicing, triggerNote, type Voicing } from "./voicing";
+import {
+  combineVoicings,
+  maestroVoicing,
+  musicianVoicing,
+  triggerNote,
+  type Voicing,
+} from "./voicing";
 
 /** How long a disconnection may last before the sound stops claiming to be in
  * time with a room it can no longer hear (§6.5). */
 const OFFLINE_FADE_AFTER_MS = 30_000;
 const OFFLINE_FADE_SEC = 4;
+
+/**
+ * How loud a monitored group layer sits on the maestro's own output. Below the
+ * base music on purpose: it is there to be checked against the drums, not to
+ * take their place.
+ */
+const MONITOR_LEVEL = 0.55;
 
 export interface SessionControllerOptions {
   url: string;
@@ -277,6 +291,24 @@ export class SessionController {
     this.applyAllParameters();
   }
 
+  // --- maestro monitoring ---
+
+  /**
+   * Audition a group's layer on this console, or stop. Local in the same way
+   * the musician's own parameter is: nothing goes on the wire, and the room
+   * hears no difference.
+   *
+   * It goes through the controller rather than straight to the store because
+   * the store is not what makes sound — the engine is, and only
+   * `applyAllParameters` pushes the timbre and the monitor level into it. A UI
+   * that flipped the store alone would leave the button lit and the console
+   * silent until the next server message happened along.
+   */
+  toggleMonitor(group: GroupId): void {
+    useAudioStore.getState().toggleMonitor(group);
+    this.applyAllParameters();
+  }
+
   /** A gesture from the pad: heard locally at once, and reported to the
    * maestro. The server relays it; it never comes back as sound. */
   sendTrigger(kind: string, intensity: number): void {
@@ -433,20 +465,51 @@ export class SessionController {
 
   private buildVoicing(): Voicing {
     const state = useSessionStore.getState();
+    // ROOT transposes every pitched line — the acid bass and the group strips
+    // alike — so that the whole room stays in one key. It reaches the sound
+    // through the voicing rather than the graph, so turning it rebuilds this,
+    // which `applyAllParameters` and the store subscription already do.
+    const transpose = Number(effectiveParameter(state.params, "bassRoot", 0));
+
     if (this.options.role === "maestro") {
-      // ROOT transposes the acid line. It reaches the sound through the
-      // voicing rather than the graph, so turning it rebuilds this — which
-      // `applyAllParameters` and the store subscription already do.
-      return maestroVoicing(state.patterns, DEFAULT_TRACKS, {
-        transpose: Number(effectiveParameter(state.params, "bassRoot", 0)),
-      });
+      const base = maestroVoicing(state.patterns, DEFAULT_TRACKS, { transpose });
+      const monitored = useAudioStore.getState().monitorGroups;
+      if (monitored.size === 0) return base;
+      // The console runs the very function the phones run, rather than a
+      // second rendering of "what a group probably plays" — so what the
+      // maestro auditions is what the room hears.
+      return combineVoicings(
+        base,
+        ...[...monitored].map((group) => this.groupVoicing(group, transpose)),
+      );
     }
-    const group = state.groupId || 1;
+
+    return this.groupVoicing(state.groupId || 1, transpose);
+  }
+
+  /** The layer of one group, as every phone of that group renders it. */
+  private groupVoicing(group: GroupId, transpose: number): Voicing {
+    const state = useSessionStore.getState();
     return musicianVoicing({
       group,
       density: Number(effectiveParameter(state.params, "density", group)),
-      sampleId: groupVoiceId(group),
+      strip: state.patterns.get(groupTrackId(group)),
+      transpose,
     });
+  }
+
+  /** The six values a group's voice is built from, as they stand right now. */
+  private synthSettings(group: GroupId): GroupSynthSettings {
+    const params = useSessionStore.getState().params;
+    const read = (key: ParameterKey) => Number(effectiveParameter(params, key, group));
+    return {
+      wave: read("synthWave"),
+      spread: read("synthSpread"),
+      attack: read("synthAttack"),
+      release: read("synthRelease"),
+      brightness: read("synthBrightness"),
+      octave: read("synthOctave"),
+    };
   }
 
   /** Pushes the parameters in force for this client into the graph. A musician
@@ -478,8 +541,33 @@ export class SessionController {
     const cutoff = Number(effectiveParameter(state.params, "cutoff", group));
     const local = useAudioStore.getState().localParam;
     this.engine.setParameter("cutoff", maestro ? cutoff : cutoff * (0.25 + 0.75 * local));
+
+    this.applySynthSettings(maestro, state.groupId);
     // `density` shapes what is played rather than how it sounds.
     this.refreshVoicing();
+  }
+
+  /**
+   * The timbre of each group layer this client renders, plus — on the console
+   * — how loud each of them is monitored. A musician builds one voice, their
+   * own; the maestro may be auditioning several, and each has to sound as its
+   * own strip on screen says it will.
+   */
+  private applySynthSettings(maestro: boolean, ownGroup: GroupId): void {
+    if (!this.engine) return;
+    if (!maestro) {
+      this.engine.setSynth(ownGroup || 1, this.synthSettings(ownGroup || 1));
+      return;
+    }
+
+    const monitored = useAudioStore.getState().monitorGroups;
+    for (const { id } of useSessionStore.getState().groups) {
+      this.engine.setSynth(id, this.synthSettings(id));
+      // Silencing an unmonitored lane rather than skipping it: a group the
+      // maestro has just switched off must stop sounding, not keep the level
+      // it had.
+      this.engine.setTrackGain(groupTrackId(id), monitored.has(id) ? MONITOR_LEVEL : 0);
+    }
   }
 
   private async waitForClock(): Promise<void> {

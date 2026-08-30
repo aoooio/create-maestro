@@ -55,3 +55,49 @@ func TestContinuousParameterRendersAsNumber(t *testing.T) {
 		t.Fatal("a continuous parameter must reach the wire as a number")
 	}
 }
+
+// The group synth is the first family of keys whose bounds are neither 0..1
+// nor unsigned, so the clamp is worth pinning down: a waveform is an index
+// into an enumeration, and an octave runs either side of zero.
+func TestGroupSynthParameterBounds(t *testing.T) {
+	tests := []struct {
+		key      ParameterKey
+		min, max float64
+		def      float64
+	}{
+		{ParamSynthWave, 0, 3, 0},
+		{ParamSynthSpread, 0, 1, 0.4},
+		{ParamSynthAttack, 0, 1, 0.05},
+		{ParamSynthRelease, 0, 1, 0.35},
+		{ParamSynthBrightness, 0, 1, 0.5},
+		{ParamSynthOctave, -2, 2, 0},
+	}
+	for _, tc := range tests {
+		spec, err := LookupParameter(tc.key)
+		if err != nil {
+			t.Fatalf("LookupParameter(%s): %v", tc.key, err)
+		}
+		if spec.Min != tc.min || spec.Max != tc.max || spec.Default != tc.def {
+			t.Fatalf("%s = [%v..%v] default %v, want [%v..%v] default %v",
+				tc.key, spec.Min, spec.Max, spec.Default, tc.min, tc.max, tc.def)
+		}
+		if got := spec.Value(tc.min - 100); got.Number != tc.min {
+			t.Fatalf("%s clamped low = %v, want %v", tc.key, got.Number, tc.min)
+		}
+		if got := spec.Value(tc.max + 100); got.Number != tc.max {
+			t.Fatalf("%s clamped high = %v, want %v", tc.key, got.Number, tc.max)
+		}
+		if got := spec.DefaultValue(); got.Number != tc.def {
+			t.Fatalf("%s default = %v, want %v", tc.key, got.Number, tc.def)
+		}
+	}
+}
+
+// A signed minimum is exactly where a clamp written as "if raw < 0" would
+// pass every other test and still be wrong.
+func TestSynthOctaveKeepsNegativeValues(t *testing.T) {
+	spec, _ := LookupParameter(ParamSynthOctave)
+	if got := spec.Value(-1); got.Number != -1 {
+		t.Fatalf("Value(-1) = %v, want -1", got.Number)
+	}
+}

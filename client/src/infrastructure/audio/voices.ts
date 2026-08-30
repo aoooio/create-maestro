@@ -176,69 +176,6 @@ const rim: SampleSpec = {
   },
 };
 
-/** Bright plucked voice — the HIGH register of the audience. */
-const pluck: SampleSpec = {
-  id: "pluck",
-  durationSec: 0.9,
-  baseFreq: BASE_FREQ,
-  render(ctx) {
-    const filter = ctx.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.setValueAtTime(6000, 0);
-    filter.frequency.exponentialRampToValueAtTime(900, 0.5);
-    filter.Q.value = 2;
-    filter.connect(decay(ctx, 0.8, 0.85)).connect(ctx.destination);
-
-    // Two saws a few cents apart: the beating is what stops fifty phones
-    // playing the same note from sounding like one very loud phone.
-    for (const detune of [-6, 6]) {
-      const osc = ctx.createOscillator();
-      osc.type = "sawtooth";
-      osc.frequency.value = BASE_FREQ * 2;
-      osc.detune.value = detune;
-      osc.connect(filter);
-      osc.start(0);
-      osc.stop(0.9);
-    }
-  },
-};
-
-/** Warm sustained voice — the MID register. */
-const pad: SampleSpec = {
-  id: "pad",
-  durationSec: 1.6,
-  baseFreq: BASE_FREQ,
-  render(ctx) {
-    const filter = ctx.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.value = 2200;
-    filter.Q.value = 0.8;
-
-    const envelope = ctx.createGain();
-    envelope.gain.setValueAtTime(0.0001, 0);
-    envelope.gain.exponentialRampToValueAtTime(0.7, 0.18);
-    envelope.gain.setValueAtTime(0.7, 1.1);
-    envelope.gain.exponentialRampToValueAtTime(0.0001, 1.55);
-
-    filter.connect(envelope).connect(ctx.destination);
-    for (const [type, detune, level] of [
-      ["sawtooth", -8, 0.5],
-      ["triangle", 0, 0.6],
-      ["sawtooth", 9, 0.5],
-    ] as const) {
-      const osc = ctx.createOscillator();
-      osc.type = type;
-      osc.frequency.value = BASE_FREQ;
-      osc.detune.value = detune;
-      const gain = ctx.createGain();
-      gain.gain.value = level;
-      osc.connect(gain).connect(filter);
-      osc.start(0);
-      osc.stop(1.6);
-    }
-  },
-};
-
 /** The one-shot a musician fires from the pad. */
 const spark: SampleSpec = {
   id: "spark",
@@ -266,17 +203,16 @@ const spark: SampleSpec = {
 /** Everything the maestro's drum machine can put on a track. */
 export const MAESTRO_VOICES: readonly SampleSpec[] = [kick, snare, hat, openHat, clap, rim];
 
-/** What a musician's phone renders, by register. Keeping the palette in the
- * bundle (rather than fetching per group) is what makes a hot group change a
- * crossfade instead of a download — §9.3. */
-export const MUSICIAN_VOICES: readonly SampleSpec[] = [pluck, pad, spark];
+/**
+ * What a musician's phone renders. Only the pad's one-shot is a buffer: the
+ * sustained layer of a group is synthesised note by note (`groupSynth.ts`), so
+ * that the maestro can edit its timbre live. That settles §9.3 by removing the
+ * question — there is no per-group palette left to serve or to embed, and a
+ * hot group change costs nothing to load.
+ */
+export const MUSICIAN_VOICES: readonly SampleSpec[] = [spark];
 
 export const ALL_VOICES: readonly SampleSpec[] = [...MAESTRO_VOICES, ...MUSICIAN_VOICES];
-
-/** The sustained voice a group plays, by group id. */
-export function groupVoiceId(group: number): string {
-  return group === 1 ? "pluck" : "pad";
-}
 
 /**
  * Default tracks of the maestro's sequencer, in display order.

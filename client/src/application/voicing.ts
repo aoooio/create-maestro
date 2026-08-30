@@ -15,23 +15,27 @@
  */
 
 import { clampNote, midiToFreq } from "@/domain/note";
-import { stepAt } from "@/domain/pattern";
-import type { Pattern, StepEvent } from "@/domain/types";
+import { hasActiveStep, stepAt, stepAtIndex } from "@/domain/pattern";
+import { LAYER_BASE_NOTE, PENTATONIC_MINOR, groupTrackId } from "@/domain/scale";
+import type { GroupId, Pattern, StepEvent } from "@/domain/types";
 
 export interface PlannedNote {
   readonly trackId: string;
-  readonly sampleId: string;
+  /** Which buffer to play. Absent on a synthesised voice, which has none. */
+  readonly sampleId?: string;
   /** 0..1. */
   readonly velocity: number;
   /** Pitched voices only. */
   readonly freq?: number;
   /** How the engine should make the sound. Absent means a sample, which is
-   * every voice but the acid bass. */
-  readonly voice?: "sample" | "acid";
-  /** Acid only: a 303's accent, from the step's velocity. */
+   * every voice but the acid bass and the group layers. */
+  readonly voice?: "sample" | "acid" | "synth";
+  /** Synthesised voices only: an accent, from the step's velocity. */
   readonly accent?: boolean;
-  /** Acid only: how long to hold the note, i.e. one step. */
+  /** Synthesised voices only: how long to hold the note, i.e. one step. */
   readonly durationSec?: number;
+  /** Group layer only: whose timbre to build the note with. */
+  readonly group?: GroupId;
 }
 
 export type Voicing = (event: StepEvent) => readonly PlannedNote[];
@@ -40,8 +44,10 @@ export type Voicing = (event: StepEvent) => readonly PlannedNote[];
 export const BASE_FREQ = 220;
 
 /** Minor pentatonic: no interval in it can clash with another, which matters
- * when the players cannot hear each other. */
-const SCALE = [0, 3, 5, 7, 10];
+ * when the players cannot hear each other. The console's note grid is drawn
+ * from the same scale, so a written strip and a derived figure sit in one key
+ * — which is why it lives in the domain and not here. */
+const SCALE = PENTATONIC_MINOR;
 
 /** Root of each bar, cycling every four bars: i · i · IV · V. */
 const PROGRESSION = [0, 0, 5, 7];
@@ -65,20 +71,65 @@ const FIGURES: Record<number, readonly number[]> = {
 };
 
 export interface MusicianVoicingOptions {
-  group: number;
-  /** The maestro's `density` for this group, 0..1. */
+  group: GroupId;
+  /** The maestro's `density` for this group, 0..1. Governs the derived figure
+   * only: a written strip is played as written. */
   density: number;
-  sampleId: string;
-  /** Octave offset, so HIGH sits above MID. */
+  /**
+   * The note strip the maestro has written for this group, if any. It arrives
+   * by `pattern.set` on the group's own track, so every phone of the group is
+   * reading the same grid — which is what replaces "we all computed the same
+   * thing" as the reason two devices agree.
+   */
+  strip?: Pattern;
+  /** Semitones added to every note: the console's ROOT, so the whole room
+   * stays in one key. */
+  transpose?: number;
+  /** Octave offset, so HIGH sits above MID. Derived figure only; a strip
+   * carries its own register in the notes the maestro picked. */
   octave?: number;
 }
 
 /**
- * The layer a musician's phone plays. Depends only on the step and the
- * options, so two phones in the same group with the same parameters produce
- * exactly the same sequence.
+ * The layer a musician's phone plays.
+ *
+ * Two paths, and the order between them is the whole design. When the maestro
+ * has written a strip, it wins: every phone of the group plays the notes on
+ * the wire, at the step the shared clock puts them on. When there is none — a
+ * fresh session, a group nobody has touched — the original derived figure
+ * takes over, so a console left alone still sounds like a piece of music.
+ *
+ * Both paths are deterministic in the same way: given the same session state
+ * and the same step, two phones return the same note. That is what makes "do
+ * these two clients agree?" a unit test rather than a rehearsal, and it is why
+ * the fallback was not simply deleted.
  */
 export function musicianVoicing(options: MusicianVoicingOptions): Voicing {
+  const transpose = Math.round(options.transpose ?? 0);
+  const trackId = groupTrackId(options.group);
+
+  if (hasActiveStep(options.strip)) {
+    const strip = options.strip!;
+    return (event: StepEvent) => {
+      // Read on the *absolute* step index, not the position in the bar: a
+      // strip may be two or four bars long, and folding it onto the bar would
+      // silence everything past its first sixteen cells.
+      const step = stepAtIndex(strip, event.index);
+      if (!step?.on) return [];
+      return [
+        {
+          trackId,
+          voice: "synth",
+          group: options.group,
+          velocity: step.velocity,
+          freq: midiToFreq(clampNote(step.note + transpose)),
+          accent: step.velocity >= ACCENT_THRESHOLD,
+          durationSec: event.secondsPerStep,
+        },
+      ];
+    };
+  }
+
   const figure = FIGURES[options.group] ?? FIGURES[1]!;
   const octave = options.octave ?? (options.group === 1 ? 1 : 0);
 
@@ -92,15 +143,27 @@ export function musicianVoicing(options: MusicianVoicingOptions): Voicing {
 
     return [
       {
-        trackId: `group${options.group}`,
-        sampleId: options.sampleId,
+        trackId,
+        voice: "synth",
+        group: options.group,
         // Strong beats a little louder: the bar has to be legible without a
         // drum in the mix on the musician's own phone.
         velocity: event.stepInBar % 4 === 0 ? 0.85 : 0.6,
-        freq: BASE_FREQ * 2 ** (semitones / 12),
+        freq: midiToFreq(clampNote(LAYER_BASE_NOTE + semitones + transpose)),
+        durationSec: event.secondsPerStep,
       },
     ];
   };
+}
+
+/**
+ * Several layers heard as one. It exists so the maestro can monitor the group
+ * layers over the base music without a second code path deciding what a group
+ * plays — the console hears exactly the function the phones are running.
+ */
+export function combineVoicings(...voicings: readonly Voicing[]): Voicing {
+  if (voicings.length === 1) return voicings[0]!;
+  return (event: StepEvent) => voicings.flatMap((voicing) => voicing(event));
 }
 
 export interface TrackBinding {

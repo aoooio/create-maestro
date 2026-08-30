@@ -17,6 +17,7 @@
  */
 
 import { cutoffToHz, resonanceToQ } from "./effects";
+import type { StoppableVoice } from "./voice";
 
 /** Every value is 0..1, as the parameter registry stores them. */
 export interface AcidSettings {
@@ -75,11 +76,6 @@ export interface AcidNote {
   readonly accent: boolean;
   /** One step at the tempo governing this step. */
   readonly durationSec: number;
-}
-
-/** A live voice, in the only shape the engine needs from it. */
-export interface StoppableVoice {
-  stop(when?: number): void;
 }
 
 /**

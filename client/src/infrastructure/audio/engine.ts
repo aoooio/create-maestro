@@ -18,10 +18,11 @@
  */
 
 import type { PlannedNote, Voicing } from "@/application/voicing";
-import type { StepEvent } from "@/domain/types";
+import type { GroupId, StepEvent } from "@/domain/types";
 import type { ScheduleSink } from "@/infrastructure/clock/scheduler";
 
-import { DEFAULT_ACID, playAcidNote, type AcidSettings, type StoppableVoice } from "./acidBass";
+import { DEFAULT_ACID, playAcidNote, type AcidSettings } from "./acidBass";
+import { DEFAULT_SYNTH, playSynthNote, type GroupSynthSettings } from "./groupSynth";
 import {
   createDelaySend,
   createLimiter,
@@ -32,6 +33,7 @@ import {
   type SendChain,
 } from "./effects";
 import type { SampleBank } from "./sampleLoader";
+import type { StoppableVoice } from "./voice";
 
 /** Smoothing constant for every parameter ramp: fast enough to feel immediate,
  * slow enough never to click. */
@@ -69,6 +71,12 @@ export class AudioEngine implements ScheduleSink {
   private muted = false;
   private level = 0.8;
   private acid: AcidSettings = DEFAULT_ACID;
+  /**
+   * One timbre per group rather than one for the engine: a musician renders
+   * only their own group, but the maestro monitors several at once and each
+   * must sound as its own console strip says it will.
+   */
+  private readonly synths = new Map<GroupId, GroupSynthSettings>();
 
   readonly analyser: AnalyserNode;
 
@@ -139,14 +147,18 @@ export class AudioEngine implements ScheduleSink {
     const when = Math.max(audioTime, this.ctx.currentTime);
     if (audioTime < this.ctx.currentTime - 0.05) return;
 
-    // The acid voice is synthesised rather than sampled, so it is settled
-    // before the bank is consulted — there is no buffer to find for it.
+    // The synthesised voices are settled before the bank is consulted: there
+    // is no buffer to find for either of them.
     if (note.voice === "acid") {
       this.playAcid(note, when, serverMs);
       return;
     }
+    if (note.voice === "synth") {
+      this.playSynth(note, when, serverMs);
+      return;
+    }
 
-    const sample = this.bank.get(note.sampleId);
+    const sample = note.sampleId === undefined ? undefined : this.bank.get(note.sampleId);
     if (!sample) return;
 
     const source = this.ctx.createBufferSource();
@@ -195,6 +207,59 @@ export class AudioEngine implements ScheduleSink {
     );
 
     this.live.push({ serverMs, source: voice });
+  }
+
+  /**
+   * One note of a group's layer. Built for itself, like the acid bass, and
+   * routed through the same track gain — so the bus, the sends, the monitor
+   * trim and the limiter all still see it.
+   */
+  private playSynth(note: PlannedNote, when: number, serverMs: number): void {
+    if (note.freq === undefined) return;
+
+    const settings = this.synths.get(note.group ?? 0) ?? DEFAULT_SYNTH;
+    const voice: StoppableVoice = playSynthNote(
+      this.ctx,
+      this.track(note.trackId).gain,
+      {
+        when,
+        freq: note.freq,
+        velocity: note.velocity,
+        accent: note.accent === true,
+        durationSec: note.durationSec ?? DEFAULT_GATE_SEC,
+      },
+      settings,
+      // Runs on `onended`, long after `voice` is bound. The voice disconnects
+      // its own nodes; the engine only has to stop remembering it.
+      () => {
+        this.live = this.live.filter((item) => item.source !== voice);
+      },
+    );
+
+    this.live.push({ serverMs, source: voice });
+  }
+
+  /**
+   * The timbre a group's notes are built with. Read when a note is created,
+   * not while one is sounding: no signal passes through the settings object,
+   * so there is nothing to ramp and a plain assignment cannot click.
+   */
+  setSynth(group: GroupId, settings: GroupSynthSettings): void {
+    this.synths.set(group, settings);
+  }
+
+  /**
+   * Trim on one lane, ahead of the shared filter and bus. The maestro's
+   * monitoring of a group layer rides on this: it changes what *this* console
+   * hears and nothing else, which is why it is a gain here and not a
+   * parameter on the wire.
+   */
+  setTrackGain(trackId: string, value: number): void {
+    this.track(trackId).gain.gain.setTargetAtTime(
+      Math.max(0, value),
+      this.ctx.currentTime,
+      PARAM_TAU,
+    );
   }
 
   private track(trackId: string): Track {

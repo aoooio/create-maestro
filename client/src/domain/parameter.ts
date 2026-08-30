@@ -18,7 +18,13 @@ export type ParameterKey =
   | "bassEnvMod"
   | "bassDecay"
   | "bassAccent"
-  | "bassRoot";
+  | "bassRoot"
+  | "synthWave"
+  | "synthSpread"
+  | "synthAttack"
+  | "synthRelease"
+  | "synthBrightness"
+  | "synthOctave";
 
 export type ParameterKind = "continuous" | "bool";
 
@@ -50,6 +56,18 @@ export const PARAMETER_REGISTRY: Readonly<Record<ParameterKey, ParameterSpec>> =
   bassAccent: { key: "bassAccent", kind: "continuous", min: 0, max: 1, default: 0.5, label: "ACCENT" },
   // Semitones, not a 0..1 dial: a spec carries its own bounds.
   bassRoot: { key: "bassRoot", kind: "continuous", min: 0, max: 11, default: 0, label: "ROOT" },
+
+  // The layer a group plays is synthesised note by note on every phone of that
+  // group, so its timbre is a set of values rather than a file — and these are
+  // the maestro's handles on it. A waveform is an index into an enumeration
+  // and an octave is signed: bounds live per key, so neither is squeezed into
+  // a 0..1 dial.
+  synthWave: { key: "synthWave", kind: "continuous", min: 0, max: 3, default: 0, label: "WAVE" },
+  synthSpread: { key: "synthSpread", kind: "continuous", min: 0, max: 1, default: 0.4, label: "SPREAD" },
+  synthAttack: { key: "synthAttack", kind: "continuous", min: 0, max: 1, default: 0.05, label: "ATTACK" },
+  synthRelease: { key: "synthRelease", kind: "continuous", min: 0, max: 1, default: 0.35, label: "RELEASE" },
+  synthBrightness: { key: "synthBrightness", kind: "continuous", min: 0, max: 1, default: 0.5, label: "BRIGHT" },
+  synthOctave: { key: "synthOctave", kind: "continuous", min: -2, max: 2, default: 0, label: "OCTAVE" },
 };
 
 export const PARAMETER_KEYS = Object.keys(PARAMETER_REGISTRY) as ParameterKey[];
