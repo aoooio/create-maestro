@@ -43,13 +43,18 @@ export default function LandingPage() {
     }
   }
 
-  async function onJoin(event: React.FormEvent) {
+  async function onJoin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (code.trim().length === 0) return;
+    const typed = String(new FormData(event.currentTarget).get("code") ?? code);
+    const trimmed = typed.trim().toUpperCase();
+    if (trimmed.length === 0) {
+      setError("entrez le code affiché sur l’écran du maestro");
+      return;
+    }
     setBusy("join");
     setError(null);
     try {
-      const resolved = await resolveJoinCode(code.trim());
+      const resolved = await resolveJoinCode(trimmed);
       router.push(`/perform/${resolved.sessionId}`);
     } catch (failure) {
       setError(describeError(failure));
@@ -99,21 +104,25 @@ export default function LandingPage() {
               <div className="flex flex-1 items-center border border-current px-3">
                 <input
                   id="join-code"
+                  name="code"
+                  type="text"
                   value={code}
-                  onChange={(event) => setCode(event.target.value.toUpperCase())}
-                  // The server's codes are short and uppercase; so is the field.
-                  autoCapitalize="characters"
+                  onChange={(event) => setCode(event.target.value)}
+                  autoCapitalize="none"
+                  autoCorrect="off"
                   autoComplete="off"
                   spellCheck={false}
+                  inputMode="text"
+                  enterKeyHint="go"
                   maxLength={12}
                   placeholder="MZQ4"
-                  className="glow w-full bg-transparent py-3 text-lg tracking-[0.4em] outline-none placeholder:text-dimmer"
+                  className="glow w-full bg-transparent py-3 text-lg tracking-[0.4em] uppercase outline-none placeholder:text-dimmer"
                 />
                 {code.length === 0 ? <Cursor /> : null}
               </div>
               <button
                 type="submit"
-                disabled={busy !== null || code.trim().length === 0}
+                disabled={busy !== null}
                 className="glow border border-current px-5 text-sm tracking-widest uppercase transition-colors hover:bg-phosphor hover:text-screen-deep disabled:opacity-40"
               >
                 {busy === "join" ? "…" : "OK"}
